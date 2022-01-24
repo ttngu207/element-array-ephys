@@ -70,7 +70,7 @@ def get_processed_root_data_dir() -> str:
 
 class Makes():
     
-    def make_ephys_recording(key):
+    def make_ephys_recording(table, key):
         sess_dir = find_full_path(get_ephys_root_data_dir(),
                                   get_session_directory(key))
         inserted_probe_serial_number = (ProbeInsertion * probe.Probe & key).fetch1('probe')
@@ -115,7 +115,7 @@ class Makes():
                     'Processing for neuropixels probe model'
                     ' {} not yet implemented'.format(spikeglx_meta.probe_model))
 
-            EphysRecording.insert1({
+            table.insert1({
                 **key,
                 **generate_electrode_config(probe_type, electrode_group_members),
                 'acq_software': acq_software,
@@ -125,7 +125,7 @@ class Makes():
                                        or spikeglx.retrieve_recording_duration(meta_filepath))})
 
             root_dir = find_root_directory(get_ephys_root_data_dir(), meta_filepath)
-            EphysRecording.EphysFile.insert1({
+            table.EphysFile.insert1({
                 **key,
                 'file_path': meta_filepath.relative_to(root_dir).as_posix()})
         elif acq_software == 'Open Ephys':
@@ -152,7 +152,7 @@ class Makes():
                     'Processing for neuropixels'
                     ' probe model {} not yet implemented'.format(probe_data.probe_model))
 
-            EphysRecording.insert1({
+            table.insert1({
                 **key,
                 **generate_electrode_config(probe_type, electrode_group_members),
                 'acq_software': acq_software,
@@ -163,7 +163,7 @@ class Makes():
             root_dir = find_root_directory(
                 get_ephys_root_data_dir(),
                 probe_data.recording_info['recording_files'][0])
-            EphysRecording.EphysFile.insert([{**key,
+            table.EphysFile.insert([{**key,
                                     'file_path': fp.relative_to(root_dir).as_posix()}
                                    for fp in probe_data.recording_info['recording_files']])
         else:

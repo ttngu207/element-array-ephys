@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from .readers import spikeglx, kilosort, openephys
 from . import probe, find_full_path, find_root_directory, dict_to_uuid, get_logger
-from ephys_utils import Makes
+from .utils import Makes
 
 log = get_logger(__name__)
 
@@ -225,7 +225,7 @@ class EphysRecording(dj.Imported):
         """
 
     def make(self, key):
-        Makes.make_ephys_recording(key)
+        Makes.make_ephys_recording(self, key)
 
 
 @schema
