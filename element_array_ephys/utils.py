@@ -70,6 +70,7 @@ def get_processed_root_data_dir() -> str:
 
 class Makes():
     
+    @staticmethod
     def make_ephys_recording(table, key):
         sess_dir = find_full_path(get_ephys_root_data_dir(),
                                   get_session_directory(key))
