@@ -1,5 +1,3 @@
-# ----------------------------- Make methods ----------------------
-
 class Makes():
     
     @staticmethod
