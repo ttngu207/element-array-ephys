@@ -1,7 +1,7 @@
-class Makes():
+class EphysRecordingTemplate():
     
     @staticmethod
-    def make_ephys_recording(table, key):
+    def make(table, key):
         sess_dir = find_full_path(get_ephys_root_data_dir(),
                                   get_session_directory(key))
         inserted_probe_serial_number = (ProbeInsertion * probe.Probe & key).fetch1('probe')

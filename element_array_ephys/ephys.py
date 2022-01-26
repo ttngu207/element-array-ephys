@@ -6,9 +6,9 @@ import inspect
 import importlib
 from decimal import Decimal
 
+import make_templates
 from .readers import spikeglx, kilosort, openephys
 from . import probe, find_full_path, find_root_directory, dict_to_uuid, get_logger
-from .utils import Makes
 
 log = get_logger(__name__)
 
@@ -225,7 +225,7 @@ class EphysRecording(dj.Imported):
         """
 
     def make(self, key):
-        Makes.make_ephys_recording(self, key)
+        make_templates.EphysRecordingTemplate.make(self, key)
 
 
 @schema
