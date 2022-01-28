@@ -2,9 +2,11 @@ class EphysRecordingTemplate():
     
     @staticmethod
     def make(table, key):
-        sess_dir = find_full_path(get_ephys_root_data_dir(),
-                                  get_session_directory(key))
-        inserted_probe_serial_number = (ProbeInsertion * probe.Probe & key).fetch1('probe')
+        ephys = __import__(table.__module__)
+
+        sess_dir = ephys.find_full_path(ephys.get_ephys_root_data_dir(),
+                                  ephys.get_session_directory(key))
+        inserted_probe_serial_number = (ephys.ProbeInsertion * ephys.probe.Probe & key).fetch1('probe')
 
         # search session dir and determine acquisition software
         for ephys_pattern, ephys_acq_type in zip(['*.ap.meta', '*.oebin'],
@@ -18,11 +20,11 @@ class EphysRecordingTemplate():
                 f'Ephys recording data not found!'
                 f' Neither SpikeGLX nor Open Ephys recording files found')
 
-        supported_probe_types = probe.ProbeType.fetch('probe_type')
+        supported_probe_types = ephys.probe.ProbeType.fetch('probe_type')
 
         if acq_software == 'SpikeGLX':
             for meta_filepath in ephys_meta_filepaths:
-                spikeglx_meta = spikeglx.SpikeGLXMeta(meta_filepath)
+                spikeglx_meta = ephys.spikeglx.SpikeGLXMeta(meta_filepath)
                 if str(spikeglx_meta.probe_SN) == inserted_probe_serial_number:
                     break
             else:
@@ -31,7 +33,7 @@ class EphysRecordingTemplate():
 
             if spikeglx_meta.probe_model in supported_probe_types:
                 probe_type = spikeglx_meta.probe_model
-                electrode_query = probe.ProbeType.Electrode & {'probe_type': probe_type}
+                electrode_query = ephys.probe.ProbeType.Electrode & {'probe_type': probe_type}
 
                 probe_electrodes = {
                     (shank, shank_col, shank_row): key
@@ -48,19 +50,19 @@ class EphysRecordingTemplate():
 
             table.insert1({
                 **key,
-                **generate_electrode_config(probe_type, electrode_group_members),
+                **ephys.generate_electrode_config(probe_type, electrode_group_members),
                 'acq_software': acq_software,
                 'sampling_rate': spikeglx_meta.meta['imSampRate'],
                 'recording_datetime': spikeglx_meta.recording_time,
                 'recording_duration': (spikeglx_meta.recording_duration
-                                       or spikeglx.retrieve_recording_duration(meta_filepath))})
+                                       or ephys.spikeglx.retrieve_recording_duration(meta_filepath))})
 
-            root_dir = find_root_directory(get_ephys_root_data_dir(), meta_filepath)
+            root_dir = ephys.find_root_directory(ephys.get_ephys_root_data_dir(), meta_filepath)
             table.EphysFile.insert1({
                 **key,
                 'file_path': meta_filepath.relative_to(root_dir).as_posix()})
         elif acq_software == 'Open Ephys':
-            dataset = openephys.OpenEphys(sess_dir)
+            dataset = ephys.openephys.OpenEphys(sess_dir)
             for serial_number, probe_data in dataset.probes.items():
                 if str(serial_number) == inserted_probe_serial_number:
                     break
@@ -70,7 +72,7 @@ class EphysRecordingTemplate():
 
             if probe_data.probe_model in supported_probe_types:
                 probe_type = probe_data.probe_model
-                electrode_query = probe.ProbeType.Electrode & {'probe_type': probe_type}
+                electrode_query = ephys.probe.ProbeType.Electrode & {'probe_type': probe_type}
 
                 probe_electrodes = {key['electrode']: key
                                     for key in electrode_query.fetch('KEY')}
@@ -85,14 +87,14 @@ class EphysRecordingTemplate():
 
             table.insert1({
                 **key,
-                **generate_electrode_config(probe_type, electrode_group_members),
+                **ephys.generate_electrode_config(probe_type, electrode_group_members),
                 'acq_software': acq_software,
                 'sampling_rate': probe_data.ap_meta['sample_rate'],
                 'recording_datetime': probe_data.recording_info['recording_datetimes'][0],
-                'recording_duration': np.sum(probe_data.recording_info['recording_durations'])})
+                'recording_duration': ephys.np.sum(probe_data.recording_info['recording_durations'])})
 
-            root_dir = find_root_directory(
-                get_ephys_root_data_dir(),
+            root_dir = ephys.find_root_directory(
+                ephys.get_ephys_root_data_dir(),
                 probe_data.recording_info['recording_files'][0])
             table.EphysFile.insert([{**key,
                                     'file_path': fp.relative_to(root_dir).as_posix()}
@@ -107,13 +109,15 @@ class LFPTemplate():
 
     @staticmethod
     def make(table, key):
-        acq_software = (EphysRecording * ProbeInsertion & key).fetch1('acq_software')
+        ephys = __import__(table.__module__)
+
+        acq_software = (ephys.EphysRecording * ephys.ProbeInsertion & key).fetch1('acq_software')
 
         electrode_keys, lfp = [], []
 
         if acq_software == 'SpikeGLX':
-            spikeglx_meta_filepath = get_spikeglx_meta_filepath(key)
-            spikeglx_recording = spikeglx.SpikeGLX(spikeglx_meta_filepath.parent)
+            spikeglx_meta_filepath = ephys.get_spikeglx_meta_filepath(key)
+            spikeglx_recording = ephys.spikeglx.SpikeGLX(spikeglx_meta_filepath.parent)
 
             lfp_channel_ind = spikeglx_recording.lfmeta.recording_channels[
                           -1::-table._skip_channel_counts]
@@ -124,13 +128,13 @@ class LFPTemplate():
 
             table.insert1(dict(key,
                               lfp_sampling_rate=spikeglx_recording.lfmeta.meta['imSampRate'],
-                              lfp_time_stamps=(np.arange(lfp.shape[1])
+                              lfp_time_stamps=(ephys.np.arange(lfp.shape[1])
                                                / spikeglx_recording.lfmeta.meta['imSampRate']),
                               lfp_mean=lfp.mean(axis=0)))
 
-            electrode_query = (probe.ProbeType.Electrode
-                               * probe.ElectrodeConfig.Electrode
-                               * EphysRecording & key)
+            electrode_query = (ephys.probe.ProbeType.Electrode
+                               * ephys.probe.ElectrodeConfig.Electrode
+                               * ephys.EphysRecording & key)
             probe_electrodes = {
                 (shank, shank_col, shank_row): key
                 for key, shank, shank_col, shank_row in zip(*electrode_query.fetch(
@@ -140,13 +144,13 @@ class LFPTemplate():
                 shank, shank_col, shank_row, _ = spikeglx_recording.apmeta.shankmap['data'][recorded_site]
                 electrode_keys.append(probe_electrodes[(shank, shank_col, shank_row)])
         elif acq_software == 'Open Ephys':
-            oe_probe = get_openephys_probe_data(key)
+            oe_probe = ephys.get_openephys_probe_data(key)
 
-            lfp_channel_ind = np.r_[
+            lfp_channel_ind = ephys.np.r_[
                 len(oe_probe.lfp_meta['channels_indices'])-1:0:-table._skip_channel_counts]
 
             lfp = oe_probe.lfp_timeseries[:, lfp_channel_ind]  # (sample x channel)
-            lfp = (lfp * np.array(oe_probe.lfp_meta['channels_gains'])[lfp_channel_ind]).T  # (channel x sample)
+            lfp = (lfp * ephys.np.array(oe_probe.lfp_meta['channels_gains'])[lfp_channel_ind]).T  # (channel x sample)
             lfp_timestamps = oe_probe.lfp_timestamps
 
             table.insert1(dict(key,
@@ -154,9 +158,9 @@ class LFPTemplate():
                               lfp_time_stamps=lfp_timestamps,
                               lfp_mean=lfp.mean(axis=0)))
 
-            electrode_query = (probe.ProbeType.Electrode
-                               * probe.ElectrodeConfig.Electrode
-                               * EphysRecording & key)
+            electrode_query = (ephys.probe.ProbeType.Electrode
+                               * ephys.probe.ElectrodeConfig.Electrode
+                               * ephys.EphysRecording & key)
             probe_electrodes = {key['electrode']: key
                                 for key in electrode_query.fetch('KEY')}
 
@@ -175,33 +179,35 @@ class ClusteringTemplate():
 
     @staticmethod
     def make(table, key):
-        task_mode, output_dir = (ClusteringTask & key).fetch1(
+        ephys = __import__(table.__module__)
+
+        task_mode, output_dir = (ephys.ClusteringTask & key).fetch1(
             'task_mode', 'clustering_output_dir')
 
         if not output_dir:
-            output_dir = ClusteringTask.infer_output_dir(key, relative=True, mkdir=True)
+            output_dir = ephys.ClusteringTask.infer_output_dir(key, relative=True, mkdir=True)
             # update clustering_output_dir
-            ClusteringTask.update1({**key, 'clustering_output_dir': output_dir.as_posix()})
+            ephys.ClusteringTask.update1({**key, 'clustering_output_dir': output_dir.as_posix()})
 
-        kilosort_dir = find_full_path(get_ephys_root_data_dir(), output_dir)
+        kilosort_dir = ephys.find_full_path(ephys.get_ephys_root_data_dir(), output_dir)
 
         if task_mode == 'load':
-            kilosort.Kilosort(kilosort_dir)  # check if the directory is a valid Kilosort output
+            ephys.kilosort.Kilosort(kilosort_dir)  # check if the directory is a valid Kilosort output
         elif task_mode == 'trigger':
-            acq_software, clustering_method, params = (ClusteringTask * EphysRecording
-                                                       * ClusteringParamSet & key).fetch1(
+            acq_software, clustering_method, params = (ephys.ClusteringTask * ephys.EphysRecording
+                                                       * ephys.ClusteringParamSet & key).fetch1(
                 'acq_software', 'clustering_method', 'params')
 
             if 'kilosort' in clustering_method:
                 from element_array_ephys.readers import kilosort_triggering
 
                 # add additional probe-recording and channels details into `params`
-                params = {**params, **get_recording_channels_details(key)}
+                params = {**params, **ephys.get_recording_channels_details(key)}
                 params['fs'] = params['sample_rate']
 
                 if acq_software == 'SpikeGLX':
-                    spikeglx_meta_filepath = get_spikeglx_meta_filepath(key)
-                    spikeglx_recording = spikeglx.SpikeGLX(spikeglx_meta_filepath.parent)
+                    spikeglx_meta_filepath = ephys.get_spikeglx_meta_filepath(key)
+                    spikeglx_recording = ephys.spikeglx.SpikeGLX(spikeglx_meta_filepath.parent)
                     spikeglx_recording.validate_file('ap')
 
                     if clustering_method.startswith('pykilosort'):
@@ -221,18 +227,18 @@ class ClusteringTemplate():
                             npx_input_dir=spikeglx_meta_filepath.parent,
                             ks_output_dir=kilosort_dir,
                             params=params,
-                            KS2ver=f'{Decimal(clustering_method.replace("kilosort", "")):.1f}',
+                            KS2ver=f'{ephys.Decimal(clustering_method.replace("kilosort", "")):.1f}',
                             run_CatGT=False)
                         run_kilosort.run_modules()
                 elif acq_software == 'Open Ephys':
-                    oe_probe = get_openephys_probe_data(key)
+                    oe_probe = ephys.get_openephys_probe_data(key)
 
                     assert len(oe_probe.recording_info['recording_files']) == 1
 
                     # run kilosort
                     if clustering_method.startswith('pykilosort'):
                         kilosort_triggering.run_pykilosort(
-                            continuous_file=pathlib.Path(oe_probe.recording_info['recording_files'][0]) / 'continuous.dat',
+                            continuous_file=ephys.pathlib.Path(oe_probe.recording_info['recording_files'][0]) / 'continuous.dat',
                             kilosort_output_directory=kilosort_dir,
                             channel_ind=params.pop('channel_ind'),
                             x_coords=params.pop('x_coords'),
@@ -246,7 +252,7 @@ class ClusteringTemplate():
                             npx_input_dir=oe_probe.recording_info['recording_files'][0],
                             ks_output_dir=kilosort_dir,
                             params=params,
-                            KS2ver=f'{Decimal(clustering_method.replace("kilosort", "")):.1f}')
+                            KS2ver=f'{ephys.Decimal(clustering_method.replace("kilosort", "")):.1f}')
                         run_kilosort.run_modules()
             else:
                 raise NotImplementedError(f'Automatic triggering of {clustering_method}'
@@ -255,7 +261,7 @@ class ClusteringTemplate():
         else:
             raise ValueError(f'Unknown task mode: {task_mode}')
 
-        creation_time, _, _ = kilosort.extract_clustering_info(kilosort_dir)
+        creation_time, _, _ = ephys.kilosort.extract_clustering_info(kilosort_dir)
         table.insert1({**key, 'clustering_time': creation_time})
 
 
@@ -263,15 +269,17 @@ class CuratedClusteringTemplate():
 
     @staticmethod
     def make(table, key):
-        if table.__module__ == 'ephys_no_curation':
-            output_dir = (ClusteringTask & key).fetch1('clustering_output_dir') # set no curation output directory
-        else:
-            output_dir = (Curation & key).fetch1('curation_output_dir') # set default outpit directory
-        
-        kilosort_dir = find_full_path(get_ephys_root_data_dir(), output_dir)
+        ephys = __import__(table.__module__)
 
-        kilosort_dataset = kilosort.Kilosort(kilosort_dir)
-        acq_software, sample_rate = (EphysRecording & key).fetch1(
+        if table.__module__ == 'ephys_no_curation':
+            output_dir = (ephys.ClusteringTask & key).fetch1('clustering_output_dir') # set no curation output directory
+        else:
+            output_dir = (ephys.Curation & key).fetch1('curation_output_dir') # set default outpit directory
+        
+        kilosort_dir = ephys.find_full_path(ephys.get_ephys_root_data_dir(), output_dir)
+
+        kilosort_dataset = ephys.kilosort.Kilosort(kilosort_dir)
+        acq_software, sample_rate = (ephys.EphysRecording & key).fetch1(
             'acq_software', 'sampling_rate')
 
         sample_rate = kilosort_dataset.data['params'].get('sample_rate', sample_rate)
@@ -283,7 +291,7 @@ class CuratedClusteringTemplate():
         valid_units = kilosort_dataset.data['cluster_ids'][withspike_idx]
         valid_unit_labels = kilosort_dataset.data['cluster_groups'][withspike_idx]
         # -- Get channel and electrode-site mapping
-        channel2electrodes = get_neuropixels_channel2electrode_map(key, acq_software)
+        channel2electrodes = ephys.get_neuropixels_channel2electrode_map(key, acq_software)
 
         # -- Spike-times --
         # spike_times_sec_adj > spike_times_sec > spike_times
@@ -294,7 +302,7 @@ class CuratedClusteringTemplate():
         kilosort_dataset.extract_spike_depths()
 
         # -- Spike-sites and Spike-depths --
-        spike_sites = np.array([channel2electrodes[s]['electrode']
+        spike_sites = ephys.np.array([channel2electrodes[s]['electrode']
                                 for s in kilosort_dataset.data['spike_sites']])
         spike_depths = kilosort_dataset.data['spike_depths']
 
@@ -324,33 +332,35 @@ class WaveformSetTemplate():
 
     @staticmethod
     def make(table, key):
+        ephys = __import__(table.__module__)
+
         if table.__module__ == 'ephys_no_curation':
-            output_dir = (ClusteringTask & key).fetch1('clustering_output_dir') # set no curation output directory
+            output_dir = (ephys.ClusteringTask & key).fetch1('clustering_output_dir') # set no curation output directory
         else:
-            output_dir = (Curation & key).fetch1('curation_output_dir') # set default outpit directory
+            output_dir = (ephys.Curation & key).fetch1('curation_output_dir') # set default outpit directory
             
-        kilosort_dir = find_full_path(get_ephys_root_data_dir(), output_dir)
+        kilosort_dir = ephys.find_full_path(ephys.get_ephys_root_data_dir(), output_dir)
 
-        kilosort_dataset = kilosort.Kilosort(kilosort_dir)
+        kilosort_dataset = ephys.kilosort.Kilosort(kilosort_dir)
 
-        acq_software, probe_serial_number = (EphysRecording * ProbeInsertion & key).fetch1(
+        acq_software, probe_serial_number = (ephys.EphysRecording * ephys.ProbeInsertion & key).fetch1(
             'acq_software', 'probe')
 
         # -- Get channel and electrode-site mapping
-        recording_key = (EphysRecording & key).fetch1('KEY')
-        channel2electrodes = get_neuropixels_channel2electrode_map(recording_key, acq_software)
+        recording_key = (ephys.EphysRecording & key).fetch1('KEY')
+        channel2electrodes = ephys.get_neuropixels_channel2electrode_map(recording_key, acq_software)
 
         # Get all units
-        units = {u['unit']: u for u in (CuratedClustering.Unit & key).fetch(
+        units = {u['unit']: u for u in (ephys.CuratedClustering.Unit & key).fetch(
             as_dict=True, order_by='unit')}
 
         if table.__module__ == 'ephys_no_curation':
             unit_waveforms_condition = (kilosort_dir / 'mean_waveforms.npy').exists() # set ephys_no_curation conditional
         else:
-            unit_waveforms_condition = (Curation & key).fetch1('quality_control') # set default conditional
+            unit_waveforms_condition = (ephys.Curation & key).fetch1('quality_control') # set default conditional
 
         if unit_waveforms_condition:
-            unit_waveforms = np.load(kilosort_dir / 'mean_waveforms.npy')  # unit x channel x sample
+            unit_waveforms = ephys.np.load(kilosort_dir / 'mean_waveforms.npy')  # unit x channel x sample
 
             def yield_unit_waveforms():
                 for unit_no, unit_waveform in zip(kilosort_dataset.data['cluster_ids'],
@@ -371,12 +381,12 @@ class WaveformSetTemplate():
                     yield unit_peak_waveform, unit_electrode_waveforms
         else:
             if acq_software == 'SpikeGLX':
-                spikeglx_meta_filepath = get_spikeglx_meta_filepath(key)
-                neuropixels_recording = spikeglx.SpikeGLX(spikeglx_meta_filepath.parent)
+                spikeglx_meta_filepath = ephys.get_spikeglx_meta_filepath(key)
+                neuropixels_recording = ephys.spikeglx.SpikeGLX(spikeglx_meta_filepath.parent)
             elif acq_software == 'Open Ephys':
-                sess_dir = find_full_path(get_ephys_root_data_dir(),
-                                          get_session_directory(key))
-                openephys_dataset = openephys.OpenEphys(sess_dir)
+                sess_dir = ephys.find_full_path(ephys.get_ephys_root_data_dir(),
+                                          ephys.get_session_directory(key))
+                openephys_dataset = ephys.openOpenEphys(sess_dir)
                 neuropixels_recording = openephys_dataset.probes[probe_serial_number]
 
             def yield_unit_waveforms():
