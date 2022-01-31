@@ -6,6 +6,7 @@ import importlib
 
 import make_templates
 from element_interface.utils import find_root_directory, find_full_path, dict_to_uuid
+
 from .readers import spikeglx, kilosort, openephys
 from . import probe, get_logger
 
