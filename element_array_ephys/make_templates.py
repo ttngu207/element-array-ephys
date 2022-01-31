@@ -1,24 +1,28 @@
+from decimal import Decimal
+
+
 class EphysRecordingTemplate():
     
     @staticmethod
     def make(table, key):
         ephys = __import__(table.__module__)
 
-        sess_dir = ephys.find_full_path(ephys.get_ephys_root_data_dir(),
+        session_dir = ephys.find_full_path(ephys.get_ephys_root_data_dir(),
                                   ephys.get_session_directory(key))
         inserted_probe_serial_number = (ephys.ProbeInsertion * ephys.probe.Probe & key).fetch1('probe')
 
         # search session dir and determine acquisition software
         for ephys_pattern, ephys_acq_type in zip(['*.ap.meta', '*.oebin'],
                                                  ['SpikeGLX', 'Open Ephys']):
-            ephys_meta_filepaths = list(sess_dir.rglob(ephys_pattern))
+            ephys_meta_filepaths = list(session_dir.rglob(ephys_pattern))
             if ephys_meta_filepaths:
                 acq_software = ephys_acq_type
                 break
         else:
             raise FileNotFoundError(
                 f'Ephys recording data not found!'
-                f' Neither SpikeGLX nor Open Ephys recording files found')
+                f' Neither SpikeGLX nor Open Ephys recording files found'
+                f' in {session_dir}')
 
         supported_probe_types = ephys.probe.ProbeType.fetch('probe_type')
 
@@ -57,12 +61,13 @@ class EphysRecordingTemplate():
                 'recording_duration': (spikeglx_meta.recording_duration
                                        or ephys.spikeglx.retrieve_recording_duration(meta_filepath))})
 
-            root_dir = ephys.find_root_directory(ephys.get_ephys_root_data_dir(), meta_filepath)
+            root_dir = ephys.find_root_directory(ephys.get_ephys_root_data_dir(), 
+                                                 meta_filepath)
             table.EphysFile.insert1({
                 **key,
                 'file_path': meta_filepath.relative_to(root_dir).as_posix()})
         elif acq_software == 'Open Ephys':
-            dataset = ephys.openephys.OpenEphys(sess_dir)
+            dataset = ephys.openephys.OpenEphys(session_dir)
             for serial_number, probe_data in dataset.probes.items():
                 if str(serial_number) == inserted_probe_serial_number:
                     break
@@ -93,9 +98,8 @@ class EphysRecordingTemplate():
                 'recording_datetime': probe_data.recording_info['recording_datetimes'][0],
                 'recording_duration': ephys.np.sum(probe_data.recording_info['recording_durations'])})
 
-            root_dir = ephys.find_root_directory(
-                ephys.get_ephys_root_data_dir(),
-                probe_data.recording_info['recording_files'][0])
+            root_dir = ephys.find_root_directory(ephys.get_ephys_root_data_dir(), 
+                                                 probe_data.recording_info['recording_files'][0])
             table.EphysFile.insert([{**key,
                                     'file_path': fp.relative_to(root_dir).as_posix()}
                                    for fp in probe_data.recording_info['recording_files']])
@@ -227,7 +231,7 @@ class ClusteringTemplate():
                             npx_input_dir=spikeglx_meta_filepath.parent,
                             ks_output_dir=kilosort_dir,
                             params=params,
-                            KS2ver=f'{ephys.Decimal(clustering_method.replace("kilosort", "")):.1f}',
+                            KS2ver=f'{Decimal(clustering_method.replace("kilosort", "")):.1f}',
                             run_CatGT=False)
                         run_kilosort.run_modules()
                 elif acq_software == 'Open Ephys':
@@ -252,7 +256,7 @@ class ClusteringTemplate():
                             npx_input_dir=oe_probe.recording_info['recording_files'][0],
                             ks_output_dir=kilosort_dir,
                             params=params,
-                            KS2ver=f'{ephys.Decimal(clustering_method.replace("kilosort", "")):.1f}')
+                            KS2ver=f'{Decimal(clustering_method.replace("kilosort", "")):.1f}')
                         run_kilosort.run_modules()
             else:
                 raise NotImplementedError(f'Automatic triggering of {clustering_method}'
@@ -384,9 +388,9 @@ class WaveformSetTemplate():
                 spikeglx_meta_filepath = ephys.get_spikeglx_meta_filepath(key)
                 neuropixels_recording = ephys.spikeglx.SpikeGLX(spikeglx_meta_filepath.parent)
             elif acq_software == 'Open Ephys':
-                sess_dir = ephys.find_full_path(ephys.get_ephys_root_data_dir(),
-                                          ephys.get_session_directory(key))
-                openephys_dataset = ephys.openOpenEphys(sess_dir)
+                session_dir = ephys.find_full_path(ephys.get_ephys_root_data_dir(), 
+                                                   ephys.get_session_directory(key))
+                openephys_dataset = ephys.openOpenEphys(session_dir)
                 neuropixels_recording = openephys_dataset.probes[probe_serial_number]
 
             def yield_unit_waveforms():
