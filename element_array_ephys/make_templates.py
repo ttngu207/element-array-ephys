@@ -1,3 +1,4 @@
+import importlib
 from decimal import Decimal
 
 
@@ -5,7 +6,7 @@ class EphysRecordingTemplate():
     
     @staticmethod
     def make(table, key):
-        ephys = __import__(table.__module__)
+        ephys = importlib.import_module(table.__module__)
 
         session_dir = ephys.find_full_path(ephys.get_ephys_root_data_dir(),
                                   ephys.get_session_directory(key))
@@ -113,7 +114,7 @@ class LFPTemplate():
 
     @staticmethod
     def make(table, key):
-        ephys = __import__(table.__module__)
+        ephys = importlib.import_module(table.__module__)
 
         acq_software = (ephys.EphysRecording * ephys.ProbeInsertion & key).fetch1('acq_software')
 
@@ -183,7 +184,7 @@ class ClusteringTemplate():
 
     @staticmethod
     def make(table, key):
-        ephys = __import__(table.__module__)
+        ephys = importlib.import_module(table.__module__)
 
         task_mode, output_dir = (ephys.ClusteringTask & key).fetch1(
             'task_mode', 'clustering_output_dir')
@@ -273,7 +274,7 @@ class CuratedClusteringTemplate():
 
     @staticmethod
     def make(table, key):
-        ephys = __import__(table.__module__)
+        ephys = importlib.import_module(table.__module__)
 
         if table.__module__ == 'ephys_no_curation':
             output_dir = (ephys.ClusteringTask & key).fetch1('clustering_output_dir') # set no curation output directory
@@ -336,7 +337,7 @@ class WaveformSetTemplate():
 
     @staticmethod
     def make(table, key):
-        ephys = __import__(table.__module__)
+        ephys = importlib.import_module(table.__module__)
 
         if table.__module__ == 'ephys_no_curation':
             output_dir = (ephys.ClusteringTask & key).fetch1('clustering_output_dir') # set no curation output directory
