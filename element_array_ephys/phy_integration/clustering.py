@@ -3,6 +3,7 @@ import importlib
 import inspect
 import pathlib
 import shutil
+import json
 
 from element_interface.utils import find_full_path, find_root_directory
 
@@ -117,6 +118,13 @@ def fetch_files(key):
 
 
 def create_new_curation(key, clustering_dir, curation_id=None, curation_note=''):
+    """
+    Given a Clustering or Curation key and a directory with curated kilosort outputs
+    1. create a new entry in Curation
+    2. copy curated kilosort outputs to a new directory identified with `curation_id`
+    3. insert all curated kilosort output files to `CurationFile` (upload to store)
+    """
+
     clustering_dir = pathlib.Path(clustering_dir)
     assert clustering_dir.exists()
 
@@ -147,3 +155,9 @@ def create_new_curation(key, clustering_dir, curation_id=None, curation_note='')
         # ---- upload files ----
         shutil.copytree(str(clustering_dir), str(curation_dir))
         CurationFile().make(curation_key)
+
+    # write a json file to log the "from_key" information for reference
+    key_json_file = curation_dir / '.from_key.json'
+    key_json_file.touch()
+    with open(key_json_file, 'w') as f:
+        json.dump(key, f)
