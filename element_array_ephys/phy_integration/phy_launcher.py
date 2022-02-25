@@ -1,3 +1,4 @@
+import datajoint as dj
 import os
 import logging
 from . import clustering
@@ -40,5 +41,8 @@ def launch_phy(key):
     run_app()
     gui.close()
     controller.model.close()
+
+    if dj.utils.user_choice('Create new Curation entry?') == 'yes':
+        clustering.create_new_curation(key, clustering_dir=clustering_dir)
 
     os.chdir(current_dir)

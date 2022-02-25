@@ -2,8 +2,9 @@ import datajoint as dj
 import importlib
 import inspect
 import pathlib
+import shutil
 
-from element_interface.utils import find_full_path
+from element_interface.utils import find_full_path, find_root_directory
 
 schema = dj.schema()
 
@@ -113,3 +114,36 @@ def fetch_files(key):
     clustering_files = (table & key).fetch('file_path')
     print(f'\t{len(clustering_files)} files fetched')
     return pathlib.Path(raw_file), pathlib.Path(clustering_files[0]).parent
+
+
+def create_new_curation(key, clustering_dir, curation_id=None, curation_note=''):
+    clustering_dir = pathlib.Path(clustering_dir)
+    assert clustering_dir.exists()
+
+    clustering_method = (ephys.Clustering * ephys.ClusteringParamSet & key).fetch1('clustering_method')
+
+    assert 'kilosort' in clustering_method, f'Unable to handle clustering method: {clustering_method}'
+
+    from ..readers import kilosort
+    creation_time, is_curated, is_qc = kilosort.extract_clustering_info(clustering_dir)
+
+    if curation_id is None:
+        curation_id = dj.U().aggr(ephys.Curation & key, n='ifnull(max(curation_id)+1,1)').fetch1('n')
+
+    root_dir = find_root_directory(ephys.get_ephys_root_data_dir(), clustering_dir)
+
+    curation_dir = clustering_dir / f'curation_{curation_id}'
+    # curation_dir.mkdir(parents=True, exist_ok=True)
+
+    curation_key = {**key, 'curation_id': curation_id}
+
+    with ephys.Curation.connection.transaction:
+        ephys.Curation.insert1({**curation_key,
+                                'curation_time': creation_time,
+                                'curation_output_dir': curation_dir.relative_to(root_dir).as_posix(),
+                                'quality_control': is_qc,
+                                'manual_curation': is_curated,
+                                'curation_note': f'Curation based on: {key}\n' + curation_note})
+        # ---- upload files ----
+        shutil.copytree(str(clustering_dir), str(curation_dir))
+        CurationFile().make(curation_key)
