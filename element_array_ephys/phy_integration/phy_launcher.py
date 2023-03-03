@@ -42,7 +42,6 @@ def launch_phy(key):
     gui.close()
     controller.model.close()
 
-    if dj.utils.user_choice('Create new Curation entry?') == 'yes':
-        clustering.create_new_curation(key, clustering_dir=clustering_dir)
+    clustering.create_new_curation(key, clustering_dir=clustering_dir, prompt=True)
 
     os.chdir(current_dir)

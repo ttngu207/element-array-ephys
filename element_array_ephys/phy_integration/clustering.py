@@ -117,7 +117,7 @@ def fetch_files(key):
     return pathlib.Path(raw_file), pathlib.Path(clustering_files[0]).parent
 
 
-def create_new_curation(key, clustering_dir, curation_id=None, curation_note=''):
+def create_new_curation(key, clustering_dir, curation_id=None, curation_note='', prompt=True):
     """
     Given a Clustering or Curation key and a directory with curated kilosort outputs
     1. create a new entry in Curation
@@ -144,6 +144,10 @@ def create_new_curation(key, clustering_dir, curation_id=None, curation_note='')
     # curation_dir.mkdir(parents=True, exist_ok=True)
 
     curation_key = {**key, 'curation_id': curation_id}
+
+    if prompt and dj.utils.user_choice(f'Create new Curation with "curation_id": {curation_id}?') != 'yes':
+        print('Canceled')
+        return
 
     with ephys.Curation.connection.transaction:
         ephys.Curation.insert1({**curation_key,
