@@ -32,19 +32,19 @@ def activate(
         schema_name, create_schema=create_schema, create_tables=create_tables
     )
 
-    # Add neuropixels probes
-    for probe_type in (
-        "neuropixels 1.0 - 3A",
-        "neuropixels 1.0 - 3B",
-        "neuropixels UHD",
-        "neuropixels 2.0 - SS",
-        "neuropixels 2.0 - MS",
-    ):
-        if not (ProbeType & {"probe_type": probe_type}):
-            try:
-                ProbeType.create_neuropixels_probe(probe_type)
-            except dj.errors.DataJointError as e:
-                print(f"Unable to create probe-type: {probe_type}\n{str(e)}")
+    # # Add neuropixels probes
+    # for probe_type in (
+    #     "neuropixels 1.0 - 3A",
+    #     "neuropixels 1.0 - 3B",
+    #     "neuropixels UHD",
+    #     "neuropixels 2.0 - SS",
+    #     "neuropixels 2.0 - MS",
+    # ):
+    #     if not (ProbeType & {"probe_type": probe_type}):
+    #         try:
+    #             ProbeType.create_neuropixels_probe(probe_type)
+    #         except dj.errors.DataJointError as e:
+    #             print(f"Unable to create probe-type: {probe_type}\n{str(e)}")
 
 
 @schema
@@ -207,6 +207,7 @@ class ElectrodeConfig(dj.Lookup):
         """
 
 
+
 def build_electrode_layouts(
     probe_type: str,
     site_count_per_shank: int,
@@ -217,6 +218,7 @@ def build_electrode_layouts(
     shank_count: int = 1,
     shank_spacing: float = None,
     y_origin="bottom",
+    start_index: int = 0,
 ) -> list[dict]:
     """Builds electrode layouts.
 
@@ -230,6 +232,10 @@ def build_electrode_layouts(
         shank_count (int): number of shank. Defaults to 1 (single shank).
         shank_spacing (float): (um) spacing between shanks. Defaults to None (single shank).
         y_origin (str): {"bottom", "top"}. y value decrements if "top". Defaults to "bottom".
+        start_index (int): starting index for electrode and shank indexes. Defaults to 0.
+
+    Returns:
+        list[dict]: List of dictionaries representing electrode layouts.
     """
     row_count = int(site_count_per_shank / col_count_per_shank)
     x_coords = np.tile(
@@ -250,15 +256,14 @@ def build_electrode_layouts(
     return [
         {
             "probe_type": probe_type,
-            "electrode": (site_count_per_shank * shank_no) + e_id,
-            "shank": shank_no,
-            "shank_col": c_id,
-            "shank_row": r_id,
+            "electrode": (site_count_per_shank * shank_no) + e_id + start_index,
+            "shank": shank_no + start_index,
+            "shank_col": c_id + start_index,
+            "shank_row": r_id + start_index,
             "x_coord": x + (shank_no * (shank_spacing or 1)),
             "y_coord": {"top": -y, "bottom": y}[y_origin],
         }
         for shank_no in range(shank_count)
         for e_id, (c_id, r_id, x, y) in enumerate(
             zip(shank_cols, shank_rows, x_coords, y_coords)
-        )
-    ]
+        )]
