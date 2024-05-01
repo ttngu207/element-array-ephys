@@ -925,11 +925,11 @@ class WaveformSet(dj.Imported):
             raise FileNotFoundError(f"Waveform directory not found: {waveform_dir}")
 
         we: si.WaveformExtractor = si.load_waveforms(waveform_dir, with_recording=False)
-        unit_id_to_peak_channel_map: dict[
-            int, np.ndarray
-        ] = si.ChannelSparsity.from_best_channels(
-            we, 1, peak_sign="neg"
-        ).unit_id_to_channel_indices  # {unit: peak_channel_index}
+        unit_id_to_peak_channel_map: dict[int, np.ndarray] = (
+            si.ChannelSparsity.from_best_channels(
+                we, 1, peak_sign="neg"
+            ).unit_id_to_channel_indices
+        )  # {unit: peak_channel_index}
 
         # reorder channel2electrode_map according to recording channel ids
         channel2electrode_map = {
@@ -1013,12 +1013,12 @@ class QualityMetrics(dj.Imported):
         -> master
         -> CuratedClustering.Unit
         ---
-        firing_rate=null: float # (Hz) firing rate for a unit 
+        firing_rate=null: float # (Hz) firing rate for a unit as the average number of spikes within the recording per second
         snr=null: float  # signal-to-noise ratio for a unit
         presence_ratio=null: float  # fraction of time in which spikes are present
         isi_violation=null: float   # rate of ISI violation as a fraction of overall rate
         number_violation=null: int  # total number of ISI violations
-        amplitude_cutoff=null: float  # estimate of miss rate based on amplitude histogram
+        amplitude_cutoff=null: float  # estimate of the fraction of false negatives during intervals (missed rate) based on amplitude histogram. 
         isolation_distance=null: float  # distance to nearest cluster in Mahalanobis space
         l_ratio=null: float  # 
         d_prime=null: float  # Classification accuracy based on LDA
@@ -1092,10 +1092,10 @@ class QualityMetrics(dj.Imported):
             columns={
                 "isi_violations_ratio": "isi_violation",
                 "isi_violations_count": "number_violation",
-                "silhouette":"silhouette_score",
+                "silhouette": "silhouette_score",
                 "rp_contamination": "contamination_rate",
-                "drift_ptp":"max_drift",
-                "drift_mad":"cumulative_drift"
+                "drift_ptp": "max_drift",
+                "drift_mad": "cumulative_drift",
             },
             inplace=True,
         )
