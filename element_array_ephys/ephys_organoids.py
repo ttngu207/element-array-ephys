@@ -925,11 +925,11 @@ class WaveformSet(dj.Imported):
             raise FileNotFoundError(f"Waveform directory not found: {waveform_dir}")
 
         we: si.WaveformExtractor = si.load_waveforms(waveform_dir, with_recording=False)
-        unit_id_to_peak_channel_map: dict[
-            int, np.ndarray
-        ] = si.ChannelSparsity.from_best_channels(
-            we, 1, peak_sign="neg"
-        ).unit_id_to_channel_indices  # {unit: peak_channel_index}
+        unit_id_to_peak_channel_map: dict[int, np.ndarray] = (
+            si.ChannelSparsity.from_best_channels(
+                we, 1, peak_sign="neg"
+            ).unit_id_to_channel_indices
+        )  # {unit: peak_channel_index}
 
         # reorder channel2electrode_map according to recording channel ids
         channel2electrode_map = {
@@ -1003,8 +1003,8 @@ class QualityMetrics(dj.Imported):
             d_prime (float): Classification accuracy based on LDA.
             nn_hit_rate (float): Fraction of neighbors for target cluster that are also in target cluster.
             nn_miss_rate (float): Fraction of neighbors outside target cluster that are in the target cluster.
-            silhouette_core (float): Maximum change in spike depth throughout recording.
-            cumulative_drift (float): Cumulative change in spike depth throughout recording.
+            silhouette_core (float): Peak-to-peak of the drift signal for each unit.
+            cumulative_drift (float): Median absolute deviation of the drift signal for each unit.
             contamination_rate (float): Frequency of spikes in the refractory period.
         """
 
@@ -1013,20 +1013,20 @@ class QualityMetrics(dj.Imported):
         -> master
         -> CuratedClustering.Unit
         ---
-        firing_rate=null: float # (Hz) firing rate for a unit 
+        firing_rate=null: float # (Hz) firing rate for a unit as the average number of spikes within the recording per second
         snr=null: float  # signal-to-noise ratio for a unit
         presence_ratio=null: float  # fraction of time in which spikes are present
         isi_violation=null: float   # rate of ISI violation as a fraction of overall rate
         number_violation=null: int  # total number of ISI violations
-        amplitude_cutoff=null: float  # estimate of miss rate based on amplitude histogram
+        amplitude_cutoff=null: float  # estimate of the fraction of false negatives during intervals (missed rate) based on amplitude histogram. 
         isolation_distance=null: float  # distance to nearest cluster in Mahalanobis space
         l_ratio=null: float  # 
         d_prime=null: float  # Classification accuracy based on LDA
         nn_hit_rate=null: float  # Fraction of neighbors for target cluster that are also in target cluster
         nn_miss_rate=null: float # Fraction of neighbors outside target cluster that are in target cluster
         silhouette_score=null: float  # Standard metric for cluster overlap
-        max_drift=null: float  # Maximum change in spike depth throughout recording
-        cumulative_drift=null: float  # Cumulative change in spike depth throughout recording 
+        max_drift=null: float  # Peak-to-peak of the drift signal for each unit
+        cumulative_drift=null: float  # Median absolute deviation of the drift signal for each unit 
         contamination_rate=null: float # 
         """
 
@@ -1090,9 +1090,12 @@ class QualityMetrics(dj.Imported):
 
         metrics_df.rename(
             columns={
-                "isi_viol": "isi_violation",
-                "num_viol": "number_violation",
-                "contam_rate": "contamination_rate",
+                "isi_violations_ratio": "isi_violation",
+                "isi_violations_count": "number_violation",
+                "silhouette": "silhouette_score",
+                "rp_contamination": "contamination_rate",
+                "drift_ptp": "max_drift",
+                "drift_mad": "cumulative_drift",
             },
             inplace=True,
         )
