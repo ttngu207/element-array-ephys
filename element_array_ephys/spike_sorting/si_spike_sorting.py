@@ -340,8 +340,13 @@ class PostProcessing(dj.Imported):
         )
 
         # To compute commonly used waveform/template metrics.
+        template_metric_names = si.postprocessing.get_template_metric_names()
+        template_metric_names.extend(["amplitude", "duration"])
+
         template_metrics = si.postprocessing.compute_template_metrics(
-            waveform_extractor=we, include_multi_channel_metrics=True
+            waveform_extractor=we,
+            include_multi_channel_metrics=True,
+            metric_names=template_metric_names,
         )
 
         # Save the output (metrics.csv to the output dir)
