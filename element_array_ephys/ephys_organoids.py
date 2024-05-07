@@ -1096,6 +1096,8 @@ class QualityMetrics(dj.Imported):
                 "rp_contamination": "contamination_rate",
                 "drift_ptp": "max_drift",
                 "drift_mad": "cumulative_drift",
+                "half_width": "halfwidth",
+                "peak_trough_ratio": "pt_ratio",
             },
             inplace=True,
         )
