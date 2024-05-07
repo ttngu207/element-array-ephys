@@ -331,7 +331,7 @@ class PostProcessing(dj.Imported):
         _ = si.postprocessing.compute_correlograms(we)
 
         metric_names = si.qualitymetrics.get_quality_metric_list()
-        metric_names.extend(si.qualitymetrics.get_quality_pca_metric_list())  # 21
+        metric_names.extend(si.qualitymetrics.get_quality_pca_metric_list()) 
 
         # To compute commonly used cluster quality metrics.
         qc_metrics = si.qualitymetrics.compute_quality_metrics(
