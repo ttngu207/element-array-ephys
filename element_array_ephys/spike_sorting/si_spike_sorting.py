@@ -90,6 +90,18 @@ class PreProcessing(dj.Imported):
                     f"{required_key} must be defined in ClusteringParamSet for SpikeInterface execution"
                 )
 
+        # Get probe information to recording object
+        electrodes_df = (
+            (
+                ephys.EphysRecording.Channel
+                * probe.ElectrodeConfig.Electrode
+                * probe.ProbeType.Electrode
+                & key
+            )
+            .fetch(format="frame")
+            .reset_index()
+        )
+
         # Set directory to store recording file.
         if not output_dir:
             output_dir = ephys.ClusteringTask.infer_output_dir(
@@ -112,37 +124,52 @@ class PreProcessing(dj.Imported):
             )
             spikeglx_recording.validate_file("ap")
             data_dir = spikeglx_meta_filepath.parent
+
+            si_extractor: si.extractors.neoextractors = (
+                si.extractors.extractorlist.recording_extractor_full_dict["spikeglx"]
+            )
+            stream_names, stream_ids = si.extractors.get_neo_streams(
+                acq_software, folder_path=data_dir
+            )
+            si_recording: si.BaseRecording = si_extractor(
+                folder_path=data_dir, stream_name=stream_names[0]
+            )
         elif acq_software == "Open Ephys":
             oe_probe = ephys.get_openephys_probe_data(key)
             assert len(oe_probe.recording_info["recording_files"]) == 1
             data_dir = oe_probe.recording_info["recording_files"][0]
+            si_extractor: si.extractors.neoextractors = (
+                si.extractors.extractorlist.recording_extractor_full_dict["openephys"]
+            )
+            stream_names, stream_ids = si.extractors.get_neo_streams(
+                acq_software, folder_path=data_dir
+            )
+            si_recording: si.BaseRecording = si_extractor(
+                folder_path=data_dir, stream_name=stream_names[0]
+            )
+        elif acq_software == "Trellis":
+            si_extractor: si.extractors.neoextractors = (
+                si.extractors.extractorlist.recording_extractor_full_dict["blackrock"]
+            )
+
+            nsx5_relpaths = (ephys.EphysRecording.EphysFile & key).fetch("file_path")
+            nsx5_fullpaths = [
+                find_full_path(ephys.get_ephys_root_data_dir(), f + ".ns5")
+                for f in nsx5_relpaths
+            ]
+            si_recs = []
+            for f in nsx5_fullpaths:
+                si_rec = si_extractor(file_path=f, stream_name="nsx5")
+                # find & remove non-ephys channels
+                non_ephys_chns = set(si_rec.channel_ids) - set(
+                    (electrodes_df.channel_idx.values + 1).astype(str)
+                )
+                si_recs.append(si_rec.remove_channels(list(non_ephys_chns)))
+            si_recording = si.concatenate_recordings(si_recs)
         else:
             raise NotImplementedError(
                 f"SpikeInterface processing for {acq_software} not yet implemented."
             )
-        acq_software = acq_software.replace(" ", "").lower()
-        si_extractor: si.extractors.neoextractors = (
-            si.extractors.extractorlist.recording_extractor_full_dict[acq_software]
-        )  # data extractor object
-
-        stream_names, stream_ids = si.extractors.get_neo_streams(
-            acq_software, folder_path=data_dir
-        )
-        si_recording: si.BaseRecording = si_extractor(
-            folder_path=data_dir, stream_name=stream_names[0]
-        )
-
-        # Add probe information to recording object
-        electrodes_df = (
-            (
-                ephys.EphysRecording.Channel
-                * probe.ElectrodeConfig.Electrode
-                * probe.ProbeType.Electrode
-                & key
-            )
-            .fetch(format="frame")
-            .reset_index()
-        )
 
         # Create SI probe object
         si_probe = readers.probe_geometry.to_probeinterface(

@@ -35,3 +35,14 @@ def IBLdestriping_modified(recording):
         recording, operator="median", reference="global"
     )
     return recording
+
+
+def NienborgLab_preproc(recording):
+    """Preprocessing pipeline for 32chn ephys data from Trellis."""
+    recording = si.preprocessing.bandpass_filter(
+        recording=recording, freq_min=300, freq_max=6000
+    )
+    recording = si.preprocessing.common_reference(
+        recording=recording, operator="median"
+    )
+    return recording

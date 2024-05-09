@@ -4,13 +4,11 @@ import inspect
 import pathlib
 import re
 from decimal import Decimal
-
 import datajoint as dj
 import numpy as np
 import pandas as pd
-import spikeinterface as si
+
 from element_interface.utils import dict_to_uuid, find_full_path, find_root_directory
-from spikeinterface import exporters, postprocessing, qualitymetrics, sorters
 
 from . import ephys_report, probe
 from .readers import kilosort, openephys, spikeglx
@@ -818,7 +816,7 @@ class ClusteringTask(dj.Manual):
         output_dir = (
             processed_dir
             / session_dir.relative_to(root_dir)
-            / f'probe_{key["insertion_number"]}'
+            / f'insertion_{key["insertion_number"]}'
             / f'{method}_{key["paramset_idx"]}'
         )
 
@@ -1041,6 +1039,9 @@ class CuratedClustering(dj.Imported):
         si_sorting_dir = output_dir / sorter_name / "spike_sorting"
 
         if si_waveform_dir.exists():  # Read from spikeinterface outputs
+            import spikeinterface as si
+            from spikeinterface import sorters
+
             we: si.WaveformExtractor = si.load_waveforms(
                 si_waveform_dir, with_recording=False
             )
@@ -1274,6 +1275,7 @@ class WaveformSet(dj.Imported):
 
         si_waveform_dir = output_dir / sorter_name / "waveform"
         if si_waveform_dir.exists():  # read from spikeinterface outputs
+            import spikeinterface as si
             we: si.WaveformExtractor = si.load_waveforms(
                 si_waveform_dir, with_recording=False
             )
