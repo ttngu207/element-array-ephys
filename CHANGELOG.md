@@ -3,6 +3,11 @@
 Observes [Semantic Versioning](https://semver.org/spec/v2.0.0.html) standard and
  [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) convention.
 
+## [0.3.1] - 2024-05-11
+
++ Fix - Refactor `PostProcessing` logic
++ Fix - Refactor `Quality Metrics` logic
+
 ## [0.3.0] - 2023-10-25
 
 + Add - DevContainer for codespaces
