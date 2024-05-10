@@ -292,6 +292,7 @@ class PostProcessing(dj.Imported):
         ).fetch1("clustering_method", "clustering_output_dir", "params")
         output_dir = find_full_path(ephys.get_ephys_root_data_dir(), output_dir)
         sorter_name = clustering_method.replace(".", "_")
+
         recording_file = output_dir / sorter_name / "recording" / "si_recording.pkl"
         sorting_file = output_dir / sorter_name / "spike_sorting" / "si_sorting.pkl"
 
@@ -311,27 +312,46 @@ class PostProcessing(dj.Imported):
             **params.get("SI_JOB_KWARGS", {"n_jobs": -1, "chunk_size": 30000}),
         )
 
-        # Calculate QC Metrics
-        metrics: pd.DataFrame = si.qualitymetrics.compute_quality_metrics(
-            we,
-            metric_names=[
-                "firing_rate",
-                "snr",
-                "presence_ratio",
-                "isi_violation",
-                "num_spikes",
-                "amplitude_cutoff",
-                "amplitude_median",
-                "sliding_rp_violation",
-                "rp_violation",
-                "drift",
-            ],
-        )
-        # Add PCA based metrics. These will be added to the metrics dataframe above.
+        # Calculate Cluster and Waveform Metrics
+
+        # To provide waveform_principal_component
         _ = si.postprocessing.compute_principal_components(
             waveform_extractor=we, **params.get("SI_QUALITY_METRICS_PARAMS", None)
         )
-        metrics = si.qualitymetrics.compute_quality_metrics(waveform_extractor=we)
+
+        # To estimate the location of each spike in the sorting output.
+        # The drift metrics require the `spike_locations` waveform extension.
+        _ = si.postprocessing.compute_spike_locations(waveform_extractor=we)
+
+        # The `sd_ratio` metric requires the `spike_amplitudes` waveform extension.
+        # It is highly recommended before calculating amplitude-based quality metrics.
+        _ = si.postprocessing.compute_spike_amplitudes(waveform_extractor=we)
+
+        # To compute correlograms for spike trains.
+        _ = si.postprocessing.compute_correlograms(we)
+
+        metric_names = si.qualitymetrics.get_quality_metric_list()
+        metric_names.extend(si.qualitymetrics.get_quality_pca_metric_list())
+
+        # To compute commonly used cluster quality metrics.
+        qc_metrics = si.qualitymetrics.compute_quality_metrics(
+            waveform_extractor=we,
+            metric_names=metric_names,
+        )
+
+        # To compute commonly used waveform/template metrics.
+        template_metric_names = si.postprocessing.get_template_metric_names()
+        template_metric_names.extend(["amplitude", "duration"])
+
+        template_metrics = si.postprocessing.compute_template_metrics(
+            waveform_extractor=we,
+            include_multi_channel_metrics=True,
+            metric_names=template_metric_names,
+        )
+
+        # Save the output (metrics.csv to the output dir)
+        metrics = pd.DataFrame()
+        metrics = pd.concat([qc_metrics, template_metrics], axis=1)
 
         # Save metrics.csv to the output dir
         metrics_output_dir = output_dir / sorter_name / "metrics"
