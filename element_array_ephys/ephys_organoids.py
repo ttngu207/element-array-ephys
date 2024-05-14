@@ -349,7 +349,7 @@ class LFP(dj.Imported):
             trace_duration = lfp_concat.shape[1] / lfp_sampling_rate / 60  # in min
             if trace_duration != duration:
                 raise ValueError(
-                    f"Trace legnth ({trace_duration} min) is less than session duration"
+                    f"Trace length ({trace_duration} min) is less than session duration"
                 )
 
             # Single insert in loop to mitigate potential memory issue.
@@ -757,11 +757,14 @@ class CuratedClustering(dj.Imported):
 
         # Filter for used electrodes. If probe_info["used_electrodes"] is None, it means all electrodes were used.
         number_of_electrodes = len(electrode_query)
-        probe_info["used_electrodes"] = probe_info["used_electrodes"] or list(
-            range(number_of_electrodes)
+        probe_info["used_electrodes"] = (
+            probe_info["used_electrodes"]
+            if probe_info["used_electrodes"] is not None
+            else list(range(number_of_electrodes))
         )
-        electrode_query &= f'electrode IN {tuple(probe_info["used_electrodes"])}'
-
+        electrode_query &= (
+            f"electrode IN {tuple(probe_info['used_electrodes'])}"
+        )
         channel2electrode_map = electrode_query.fetch(as_dict=True)
         channel2electrode_map: dict[int, dict] = {
             chn.pop("channel_idx"): chn for chn in channel2electrode_map
@@ -910,11 +913,13 @@ class WaveformSet(dj.Imported):
 
         # Filter for used electrodes. If probe_info["used_electrodes"] is None, it means all electrodes were used.
         number_of_electrodes = len(electrode_query)
-        probe_info["used_electrodes"] = probe_info["used_electrodes"] or list(
-            range(number_of_electrodes)
+        probe_info["used_electrodes"] = (
+            probe_info["used_electrodes"]
+            if probe_info["used_electrodes"] is not None
+            else list(range(number_of_electrodes))
+        electrode_query &= (
+            f"electrode IN {tuple(probe_info['used_electrodes'])}"
         )
-        electrode_query &= f'electrode IN {tuple(probe_info["used_electrodes"])}'
-
         channel2electrode_map = electrode_query.fetch(as_dict=True)
         channel2electrode_map: dict[int, dict] = {
             chn.pop("channel_idx"): chn for chn in channel2electrode_map
@@ -1036,11 +1041,11 @@ class QualityMetrics(dj.Imported):
         Attributes:
             QualityMetrics (foreign key): QualityMetrics primary key.
             CuratedClustering.Unit (foreign key): CuratedClustering.Unit primary key.
-            amplitude (float): Absolute difference between waveform peak and trough in microvolts.
-            duration (float): Time between waveform peak and trough in milliseconds.
+            amplitude (float): Absolute difference between waveform peak and through in microvolts.
+            duration (float): Time between waveform peak and through in milliseconds.
             halfwidth (float): Spike width at half max amplitude.
-            pt_ratio (float): Absolute amplitude of peak divided by absolute amplitude of trough relative to 0.
-            repolarization_slope (float): Slope of the regression line fit to first 30 microseconds from trough to peak.
+            pt_ratio (float): Absolute amplitude of peak divided by absolute amplitude of through relative to 0.
+            repolarization_slope (float): Slope of the regression line fit to first 30 microseconds from through to peak.
             recovery_slope (float): Slope of the regression line fit to first 30 microseconds from peak to tail.
             spread (float): The range with amplitude over 12-percent of maximum amplitude along the probe.
             velocity_above (float): inverse velocity of waveform propagation from soma to the top of the probe.
@@ -1052,11 +1057,11 @@ class QualityMetrics(dj.Imported):
         -> master
         -> CuratedClustering.Unit
         ---
-        amplitude=null: float  # (uV) absolute difference between waveform peak and trough
-        duration=null: float  # (ms) time between waveform peak and trough
+        amplitude=null: float  # (uV) absolute difference between waveform peak and through
+        duration=null: float  # (ms) time between waveform peak and through
         halfwidth=null: float  # (ms) spike width at half max amplitude
-        pt_ratio=null: float  # absolute amplitude of peak divided by absolute amplitude of trough relative to 0
-        repolarization_slope=null: float  # the repolarization slope was defined by fitting a regression line to the first 30us from trough to peak
+        pt_ratio=null: float  # absolute amplitude of peak divided by absolute amplitude of through relative to 0
+        repolarization_slope=null: float  # the repolarization slope was defined by fitting a regression line to the first 30us from through to peak
         recovery_slope=null: float  # the recovery slope was defined by fitting a regression line to the first 30us from peak to tail
         spread=null: float  # (um) the range with amplitude above 12-percent of the maximum amplitude along the probe
         velocity_above=null: float  # (s/m) inverse velocity of waveform propagation from the soma toward the top of the probe
