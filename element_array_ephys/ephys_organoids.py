@@ -758,11 +758,11 @@ class CuratedClustering(dj.Imported):
         # Filter for used electrodes. If probe_info["used_electrodes"] is None, it means all electrodes were used.
         number_of_electrodes = len(electrode_query)
         probe_info["used_electrodes"] = (
-            probe_info["used_electrodes"] if probe_info["used_electrodes"] is not None else list(range(number_of_electrodes))
+            probe_info["used_electrodes"]
+            if probe_info["used_electrodes"] is not None
+            else list(range(number_of_electrodes))
         )
-        electrode_query &= (
-            f"electrode IN {tuple(probe_info['used_electrodes'])}"
-        )
+        electrode_query &= f"electrode IN {tuple(probe_info['used_electrodes'])}"
         channel2electrode_map = electrode_query.fetch(as_dict=True)
         channel2electrode_map: dict[int, dict] = {
             chn.pop("channel_idx"): chn for chn in channel2electrode_map
@@ -912,11 +912,11 @@ class WaveformSet(dj.Imported):
         # Filter for used electrodes. If probe_info["used_electrodes"] is None, it means all electrodes were used.
         number_of_electrodes = len(electrode_query)
         probe_info["used_electrodes"] = (
-            probe_info["used_electrodes"] if probe_info["used_electrodes"] is not None else list(range(number_of_electrodes))
+            probe_info["used_electrodes"]
+            if probe_info["used_electrodes"] is not None
+            else list(range(number_of_electrodes))
         )
-        electrode_query &= (
-            f"electrode IN {tuple(probe_info['used_electrodes'])}"
-        )
+        electrode_query &= f"electrode IN {tuple(probe_info['used_electrodes'])}"
         channel2electrode_map = electrode_query.fetch(as_dict=True)
         channel2electrode_map: dict[int, dict] = {
             chn.pop("channel_idx"): chn for chn in channel2electrode_map
