@@ -9,6 +9,8 @@ import datajoint as dj
 import numpy as np
 import pandas as pd
 from element_interface.utils import dict_to_uuid, find_full_path, find_root_directory
+from scipy import signal
+import intanrhdreader
 
 from . import ephys_report, probe
 from .readers import kilosort, openephys, spikeglx
@@ -39,12 +41,11 @@ def activate(
 
     Dependencies:
     Upstream tables:
-        Session: A parent table to ProbeInsertion
-        Probe: A parent table to EphysRecording. Probe information is required before electrophysiology data is imported.
+        culture.Experiment: A parent table to EphysSession.
 
     Functions:
         get_ephys_root_data_dir(): Returns absolute path for root data director(y/ies) with all electrophysiological recording sessions, as a list of string(s).
-        get_session_direction(session_key: dict): Returns path to electrophysiology data for the a particular session as a list of strings.
+        get_organoid_directory(session_key: dict): Returns path to electrophysiology data for the a particular session as a list of strings.
         get_processed_data_dir(): Optional. Returns absolute path for processed data. Defaults to root directory.
 
     """
@@ -92,7 +93,7 @@ def get_ephys_root_data_dir() -> list:
     return root_directories
 
 
-def get_session_directory(session_key: dict) -> str:
+def get_organoid_directory(session_key: dict) -> str:
     """Retrieve the session directory with Neuropixels for the given session.
 
     Args:
@@ -101,7 +102,7 @@ def get_session_directory(session_key: dict) -> str:
     Returns:
         A string for the path to the session directory.
     """
-    return _linking_module.get_session_directory(session_key)
+    return _linking_module.get_organoid_directory(session_key)
 
 
 def get_processed_root_data_dir() -> str:
@@ -131,518 +132,259 @@ class AcquisitionSoftware(dj.Lookup):
     definition = """  # Name of software used for recording of neuropixels probes - SpikeGLX or Open Ephys
     acq_software: varchar(24)    
     """
-    contents = zip(["SpikeGLX", "Open Ephys"])
+    contents = zip(["SpikeGLX", "Open Ephys", "Intan"])
 
 
 @schema
-class ProbeInsertion(dj.Manual):
-    """Information about probe insertion across subjects and sessions.
-
-    Attributes:
-        Session (foreign key): Session primary key.
-        insertion_number (foreign key, str): Unique insertion number for each probe insertion for a given session.
-        probe.Probe (str): probe.Probe primary key.
+class Port(dj.Lookup):
+    definition = """  # Port ID of the Intan acquisition system
+    port_id     : char(2)
     """
-
-    definition = """
-    # Probe insertion implanted into an animal for a given session.
-    -> Session
-    insertion_number: tinyint unsigned
-    ---
-    -> probe.Probe
-    """
-
-    @classmethod
-    def auto_generate_entries(cls, session_key):
-        """Automatically populate entries in ProbeInsertion table for a session."""
-        session_dir = find_full_path(
-            get_ephys_root_data_dir(), get_session_directory(session_key)
-        )
-        # search session dir and determine acquisition software
-        for ephys_pattern, ephys_acq_type in (
-            ("*.ap.meta", "SpikeGLX"),
-            ("*.oebin", "Open Ephys"),
-        ):
-            ephys_meta_filepaths = list(session_dir.rglob(ephys_pattern))
-            if ephys_meta_filepaths:
-                acq_software = ephys_acq_type
-                break
-        else:
-            raise FileNotFoundError(
-                f"Ephys recording data not found!"
-                f" Neither SpikeGLX nor Open Ephys recording files found in: {session_dir}"
-            )
-
-        probe_list, probe_insertion_list = [], []
-        if acq_software == "SpikeGLX":
-            for meta_fp_idx, meta_filepath in enumerate(ephys_meta_filepaths):
-                spikeglx_meta = spikeglx.SpikeGLXMeta(meta_filepath)
-
-                probe_key = {
-                    "probe_type": spikeglx_meta.probe_model,
-                    "probe": spikeglx_meta.probe_SN,
-                }
-                if (
-                    probe_key["probe"] not in [p["probe"] for p in probe_list]
-                    and probe_key not in probe.Probe()
-                ):
-                    probe_list.append(probe_key)
-
-                probe_dir = meta_filepath.parent
-                try:
-                    probe_number = re.search("(imec)?\d{1}$", probe_dir.name).group()
-                    probe_number = int(probe_number.replace("imec", ""))
-                except AttributeError:
-                    probe_number = meta_fp_idx
-
-                probe_insertion_list.append(
-                    {
-                        **session_key,
-                        "probe": spikeglx_meta.probe_SN,
-                        "insertion_number": int(probe_number),
-                    }
-                )
-        elif acq_software == "Open Ephys":
-            loaded_oe = openephys.OpenEphys(session_dir)
-            for probe_idx, oe_probe in enumerate(loaded_oe.probes.values()):
-                probe_key = {
-                    "probe_type": oe_probe.probe_model,
-                    "probe": oe_probe.probe_SN,
-                }
-                if (
-                    probe_key["probe"] not in [p["probe"] for p in probe_list]
-                    and probe_key not in probe.Probe()
-                ):
-                    probe_list.append(probe_key)
-                probe_insertion_list.append(
-                    {
-                        **session_key,
-                        "probe": oe_probe.probe_SN,
-                        "insertion_number": probe_idx,
-                    }
-                )
-        else:
-            raise NotImplementedError(f"Unknown acquisition software: {acq_software}")
-
-        probe.Probe.insert(probe_list)
-        cls.insert(probe_insertion_list, skip_duplicates=True)
+    contents = zip(["A", "B", "C", "D"])
 
 
 @schema
-class InsertionLocation(dj.Manual):
-    """Stereotaxic location information for each probe insertion.
-
-    Attributes:
-        ProbeInsertion (foreign key): ProbeInsertion primary key.
-        SkullReference (dict): SkullReference primary key.
-        ap_location (decimal (6, 2) ): Anterior-posterior location in micrometers. Reference is 0 with anterior values positive.
-        ml_location (decimal (6, 2) ): Medial-lateral location in micrometers. Reference is zero with right side values positive.
-        depth (decimal (6, 2) ): Manipulator depth relative to the surface of the brain at zero. Ventral is negative.
-        Theta (decimal (5, 2) ): elevation - rotation about the ml-axis in degrees relative to positive z-axis.
-        phi (decimal (5, 2) ): azimuth - rotation about the dv-axis in degrees relative to the positive x-axis
-
-    """
-
-    definition = """
-    # Brain Location of a given probe insertion.
-    -> ProbeInsertion
+class EphysRawFile(dj.Manual):
+    definition = """ # Catalog of all raw ephys files
+    file_path         : varchar(512) # path to the file relative to the root directory
     ---
-    -> SkullReference
-    ap_location: decimal(6, 2) # (um) anterior-posterior; ref is 0; more anterior is more positive
-    ml_location: decimal(6, 2) # (um) medial axis; ref is 0 ; more right is more positive
-    depth:       decimal(6, 2) # (um) manipulator depth relative to surface of the brain (0); more ventral is more negative
-    theta=null:  decimal(5, 2) # (deg) - elevation - rotation about the ml-axis [0, 180] - w.r.t the z+ axis
-    phi=null:    decimal(5, 2) # (deg) - azimuth - rotation about the dv-axis [0, 360] - w.r.t the x+ axis
-    beta=null:   decimal(5, 2) # (deg) rotation about the shank of the probe [-180, 180] - clockwise is increasing in degree - 0 is the probe-front facing anterior
-    """
-
-
-@schema
-class EphysRecording(dj.Imported):
-    """Automated table with electrophysiology recording information for each probe inserted during an experimental session.
-
-    Attributes:
-        ProbeInsertion (foreign key): ProbeInsertion primary key.
-        probe.ElectrodeConfig (dict): probe.ElectrodeConfig primary key.
-        AcquisitionSoftware (dict): AcquisitionSoftware primary key.
-        sampling_rate (float): sampling rate of the recording in Hertz (Hz).
-        recording_datetime (datetime): datetime of the recording from this probe.
-        recording_duration (float): duration of the entire recording from this probe in seconds.
-    """
-
-    definition = """
-    # Ephys recording from a probe insertion for a given session.
-    -> ProbeInsertion      
-    ---
-    -> probe.ElectrodeConfig
     -> AcquisitionSoftware
-    sampling_rate: float # (Hz) 
-    recording_datetime: datetime # datetime of the recording from this probe
-    recording_duration: float # (seconds) duration of the recording from this probe
+    file_time         : datetime #  date and time of the file acquisition
+    parent_folder     : varchar(128) #  parent folder containing the file
+    filename_prefix   : varchar(64)  #  filename prefix, if any, excluding the datetime information
     """
 
-    class Channel(dj.Part):
-        definition = """
-        -> master
-        channel_idx: int  # channel index (index of the raw data)
-        ---
-        -> probe.ElectrodeConfig.Electrode
-        channel_name="": varchar(64)  # alias of the channel
-        """
 
-    class EphysFile(dj.Part):
-        """Paths of electrophysiology recording files for each insertion.
+@schema
+class EphysSession(dj.Manual):
+    definition = """ # User defined ephys session for downstream analysis.
+    -> culture.Experiment
+    insertion_number            : tinyint unsigned
+    start_time                  : datetime
+    end_time                    : datetime
+    ---
+    session_type                : enum("lfp", "spike_sorting", "both")
+    """
 
-        Attributes:
-            EphysRecording (foreign key): EphysRecording primary key.
-            file_path (varchar(255) ): relative file path for electrophysiology recording.
-        """
 
-        definition = """
-        # Paths of files of a given EphysRecording round.
-        -> master
-        file_path: varchar(255)  # filepath relative to root data directory
-        """
+@schema
+class EphysSessionProbe(dj.Manual):
+    """User defined probe for each ephys session.
+    Attributes:
+        EphysSession (foreign key): EphysSession primary key.
+        probe.Probe (foreign key): probe.Probe primary key.
+        probe.ElectrodeConfig (foreign key): probe.ElectrodeConfig primary key.
+    """
+
+    definition = """
+    -> EphysSession
+    ---
+    -> probe.Probe 
+    -> Port  # port ID where the probe was connected to.
+    used_electrodes=null     : longblob  # list of electrode IDs used in this session (if null, all electrodes are used)
+    """
+
+
+@schema
+class EphysSessionInfo(dj.Imported):
+    definition = """ # Store header information from the first session file.
+    -> EphysSession
+    ---
+    session_info: longblob  # Session header info from intan .rhd file. Get this from the first session file.
+    """
 
     def make(self, key):
-        """Populates table with electrophysiology recording information."""
-        session_dir = find_full_path(
-            get_ephys_root_data_dir(), get_session_directory(key)
+        query = (
+            EphysRawFile
+            & f"file_time BETWEEN '{key['start_time']}' AND '{key['end_time']}'"
         )
-        inserted_probe_serial_number = (ProbeInsertion * probe.Probe & key).fetch1(
-            "probe"
-        )
-
-        # Search session dir and determine acquisition software
-        for ephys_pattern, ephys_acq_type in (
-            ("*.ap.meta", "SpikeGLX"),
-            ("*.oebin", "Open Ephys"),
-        ):
-            ephys_meta_filepaths = list(session_dir.rglob(ephys_pattern))
-            if ephys_meta_filepaths:
-                acq_software = ephys_acq_type
-                break
-        else:
+        if not query:
             raise FileNotFoundError(
-                f"Ephys recording data not found in {session_dir}."
-                "Neither SpikeGLX nor Open Ephys recording files found"
+                f"No EphysRawFile found BETWEEN '{key['start_time']}' AND '{key['end_time']}'"
             )
 
-        if acq_software not in AcquisitionSoftware.fetch("acq_software"):
-            raise NotImplementedError(
-                f"Processing ephys files from acquisition software of type {acq_software} is not yet implemented."
-            )
+        first_file = query.fetch("file_path", order_by="file_time", limit=1)[0]
+        first_file = find_full_path(get_ephys_root_data_dir(), first_file)
 
-        supported_probe_types = probe.ProbeType.fetch("probe_type")
-
-        if acq_software == "SpikeGLX":
-            for meta_filepath in ephys_meta_filepaths:
-                spikeglx_meta = spikeglx.SpikeGLXMeta(meta_filepath)
-                if str(spikeglx_meta.probe_SN) == inserted_probe_serial_number:
-                    spikeglx_meta_filepath = meta_filepath
-                    break
+        # Read file header
+        with open(first_file, "rb") as f:
+            try:
+                header = intanrhdreader.read_header(f)
+            except OSError:
+                raise OSError(f"Error occurred when reading file {first_file}")
             else:
-                raise FileNotFoundError(
-                    "No SpikeGLX data found for probe insertion: {}".format(key)
-                )
+                del header["spike_triggers"], header["aux_input_channels"]
 
-            if spikeglx_meta.probe_model not in supported_probe_types:
-                raise NotImplementedError(
-                    f"Processing for neuropixels probe model {spikeglx_meta.probe_model} not yet implemented."
-                )
+        logger.info(f"Populating ephys.EphysSessionInfo for <{key}>")
 
-            probe_type = spikeglx_meta.probe_model
-            electrode_query = probe.ProbeType.Electrode & {"probe_type": probe_type}
-
-            probe_electrodes = {
-                (shank, shank_col, shank_row): key
-                for key, shank, shank_col, shank_row in zip(
-                    *electrode_query.fetch("KEY", "shank", "shank_col", "shank_row")
-                )
-            }  # electrode configuration
-            electrode_group_members = [
-                probe_electrodes[(shank, shank_col, shank_row)]
-                for shank, shank_col, shank_row, _ in spikeglx_meta.shankmap["data"]
-            ]  # recording session-specific electrode configuration
-
-            econfig_entry, econfig_electrodes = generate_electrode_config_entry(
-                probe_type, electrode_group_members
-            )
-
-            ephys_recording_entry = {
-                **key,
-                "electrode_config_hash": econfig_entry["electrode_config_hash"],
-                "acq_software": acq_software,
-                "sampling_rate": spikeglx_meta.meta["imSampRate"],
-                "recording_datetime": spikeglx_meta.recording_time,
-                "recording_duration": (
-                    spikeglx_meta.recording_duration
-                    or spikeglx.retrieve_recording_duration(spikeglx_meta_filepath)
-                ),
-            }
-
-            root_dir = find_root_directory(
-                get_ephys_root_data_dir(), spikeglx_meta_filepath
-            )
-
-            ephys_file_entries = [
+        self.insert(
+            [
                 {
                     **key,
-                    "file_path": spikeglx_meta_filepath.relative_to(
-                        root_dir
-                    ).as_posix(),
+                    "session_info": header,
                 }
             ]
-
-            # Insert channel information
-            # Get channel and electrode-site mapping
-            channel2electrode_map = {
-                recorded_site: probe_electrodes[(shank, shank_col, shank_row)]
-                for recorded_site, (shank, shank_col, shank_row, _) in enumerate(
-                    spikeglx_meta.shankmap["data"]
-                )
-            }
-
-            ephys_channel_entries = [
-                {
-                    **key,
-                    "electrode_config_hash": econfig_entry["electrode_config_hash"],
-                    "channel_idx": channel_idx,
-                    **channel_info,
-                }
-                for channel_idx, channel_info in channel2electrode_map.items()
-            ]
-        elif acq_software == "Open Ephys":
-            dataset = openephys.OpenEphys(session_dir)
-            for serial_number, probe_data in dataset.probes.items():
-                if str(serial_number) == inserted_probe_serial_number:
-                    break
-            else:
-                raise FileNotFoundError(
-                    "No Open Ephys data found for probe insertion: {}".format(key)
-                )
-
-            if not probe_data.ap_meta:
-                raise IOError(
-                    'No analog signals found - check "structure.oebin" file or "continuous" directory'
-                )
-
-            if probe_data.probe_model not in supported_probe_types:
-                raise NotImplementedError(
-                    f"Processing for neuropixels probe model {probe_data.probe_model} not yet implemented."
-                )
-
-            probe_type = probe_data.probe_model
-            electrode_query = probe.ProbeType.Electrode & {"probe_type": probe_type}
-
-            probe_electrodes = {
-                key["electrode"]: key for key in electrode_query.fetch("KEY")
-            }  # electrode configuration
-
-            electrode_group_members = [
-                probe_electrodes[channel_idx]
-                for channel_idx in probe_data.ap_meta["channels_indices"]
-            ]  # recording session-specific electrode configuration
-
-            econfig_entry, econfig_electrodes = generate_electrode_config_entry(
-                probe_type, electrode_group_members
-            )
-
-            ephys_recording_entry = {
-                **key,
-                "electrode_config_hash": econfig_entry["electrode_config_hash"],
-                "acq_software": acq_software,
-                "sampling_rate": probe_data.ap_meta["sample_rate"],
-                "recording_datetime": probe_data.recording_info["recording_datetimes"][
-                    0
-                ],
-                "recording_duration": np.sum(
-                    probe_data.recording_info["recording_durations"]
-                ),
-            }
-
-            root_dir = find_root_directory(
-                get_ephys_root_data_dir(),
-                probe_data.recording_info["recording_files"][0],
-            )
-
-            ephys_file_entries = [
-                {**key, "file_path": fp.relative_to(root_dir).as_posix()}
-                for fp in probe_data.recording_info["recording_files"]
-            ]
-
-            channel2electrode_map = {
-                channel_idx: probe_electrodes[channel_idx]
-                for channel_idx in probe_data.ap_meta["channels_indices"]
-            }
-
-            ephys_channel_entries = [
-                {
-                    **key,
-                    "electrode_config_hash": econfig_entry["electrode_config_hash"],
-                    "channel_idx": channel_idx,
-                    **channel_info,
-                }
-                for channel_idx, channel_info in channel2electrode_map.items()
-            ]
-
-            # Explicitly garbage collect "dataset" as these may have large memory footprint and may not be cleared fast enough
-            del probe_data, dataset
-            gc.collect()
-        else:
-            raise NotImplementedError(
-                f"Processing ephys files from acquisition software of type {acq_software} is not yet implemented."
-            )
-
-        # Insert into probe.ElectrodeConfig (recording configuration)
-        if not probe.ElectrodeConfig & {
-            "electrode_config_hash": econfig_entry["electrode_config_hash"]
-        }:
-            probe.ElectrodeConfig.insert1(econfig_entry)
-            probe.ElectrodeConfig.Electrode.insert(econfig_electrodes)
-
-        self.insert1(ephys_recording_entry)
-        self.EphysFile.insert(ephys_file_entries)
-        self.Channel.insert(ephys_channel_entries)
+        )
 
 
 @schema
 class LFP(dj.Imported):
-    """Extracts local field potentials (LFP) from an electrophysiology recording.
-
-    Attributes:
-        EphysRecording (foreign key): EphysRecording primary key.
-        lfp_sampling_rate (float): Sampling rate for LFPs in Hz.
-        lfp_time_stamps (longblob): Time stamps with respect to the start of the recording.
-        lfp_mean (longblob): Overall mean LFP across electrodes.
-    """
-
-    definition = """
-    # Acquired local field potential (LFP) from a given Ephys recording.
-    -> EphysRecording
+    definition = """ # Store pre-processed LFP traces per electrode. Only the LFPs collected from a pre-defined recording session.
+    -> EphysSession
     ---
-    lfp_sampling_rate: float   # (Hz)
-    lfp_time_stamps: longblob  # (s) timestamps with respect to the start of the recording (recording_timestamp)
-    lfp_mean: longblob         # (uV) mean of LFP across electrodes - shape (time,)
+    lfp_sampling_rate    : float # Down-sampled sampling rate (Hz).
     """
 
-    class Electrode(dj.Part):
-        """Saves local field potential data for each electrode.
-
-        Attributes:
-            LFP (foreign key): LFP primary key.
-            probe.ElectrodeConfig.Electrode (foreign key): probe.ElectrodeConfig.Electrode primary key.
-            lfp (longblob): LFP recording at this electrode in microvolts.
-        """
-
+    class Trace(dj.Part):
         definition = """
         -> master
-        -> probe.ElectrodeConfig.Electrode  
+        -> probe.ElectrodeConfig.Electrode
         ---
-        lfp: longblob               # (uV) recorded lfp at this electrode 
+        lfp              : blob@datajoint-blob
         """
 
-    # Only store LFP for every 9th channel, due to high channel density,
-    # close-by channels exhibit highly similar LFP
-    _skip_channel_counts = 9
+    @property
+    def key_source(self):
+        return (
+            EphysSession & EphysSessionInfo & EphysSessionProbe
+        ) - "session_type='spike_sorting'"
 
     def make(self, key):
-        """Populates the LFP tables."""
-        acq_software = (EphysRecording * ProbeInsertion & key).fetch1("acq_software")
+        TARGET_SAMPLING_RATE = 2500  # Hz
+        POWERLINE_NOISE_FREQ = 60  # Hz
+        LFP_DURATION = 30  # minutes
 
-        electrode_keys, lfp = [], []
+        duration = (key["end_time"] - key["start_time"]).total_seconds() / 60  # minutes
+        assert (
+            duration <= LFP_DURATION
+        ), f"LFP sessions cannot exceeds {LFP_DURATION} minutes in duration."
 
-        if acq_software == "SpikeGLX":
-            spikeglx_meta_filepath = get_spikeglx_meta_filepath(key)
-            spikeglx_recording = spikeglx.SpikeGLX(spikeglx_meta_filepath.parent)
-
-            lfp_channel_ind = spikeglx_recording.lfmeta.recording_channels[
-                -1 :: -self._skip_channel_counts
-            ]
-
-            # Extract LFP data at specified channels and convert to uV
-            lfp = spikeglx_recording.lf_timeseries[
-                :, lfp_channel_ind
-            ]  # (sample x channel)
-            lfp = (
-                lfp * spikeglx_recording.get_channel_bit_volts("lf")[lfp_channel_ind]
-            ).T  # (channel x sample)
-
-            self.insert1(
-                dict(
-                    key,
-                    lfp_sampling_rate=spikeglx_recording.lfmeta.meta["imSampRate"],
-                    lfp_time_stamps=(
-                        np.arange(lfp.shape[1])
-                        / spikeglx_recording.lfmeta.meta["imSampRate"]
-                    ),
-                    lfp_mean=lfp.mean(axis=0),
-                )
-            )
-
-            electrode_query = (
-                probe.ProbeType.Electrode
-                * probe.ElectrodeConfig.Electrode
-                * EphysRecording
-                & key
-            )
-            probe_electrodes = {
-                (shank, shank_col, shank_row): key
-                for key, shank, shank_col, shank_row in zip(
-                    *electrode_query.fetch("KEY", "shank", "shank_col", "shank_row")
-                )
-            }
-
-            for recorded_site in lfp_channel_ind:
-                shank, shank_col, shank_row, _ = spikeglx_recording.apmeta.shankmap[
-                    "data"
-                ][recorded_site]
-                electrode_keys.append(probe_electrodes[(shank, shank_col, shank_row)])
-        elif acq_software == "Open Ephys":
-            oe_probe = get_openephys_probe_data(key)
-
-            lfp_channel_ind = np.r_[
-                len(oe_probe.lfp_meta["channels_indices"])
-                - 1 : 0 : -self._skip_channel_counts
-            ]
-
-            lfp = oe_probe.lfp_timeseries[:, lfp_channel_ind]  # (sample x channel)
-            lfp = (
-                lfp * np.array(oe_probe.lfp_meta["channels_gains"])[lfp_channel_ind]
-            ).T  # (channel x sample)
-            lfp_timestamps = oe_probe.lfp_timestamps
-
-            self.insert1(
-                dict(
-                    key,
-                    lfp_sampling_rate=oe_probe.lfp_meta["sample_rate"],
-                    lfp_time_stamps=lfp_timestamps,
-                    lfp_mean=lfp.mean(axis=0),
-                )
-            )
-
-            electrode_query = (
-                probe.ProbeType.Electrode
-                * probe.ElectrodeConfig.Electrode
-                * EphysRecording
-                & key
-            )
-            probe_electrodes = {
-                key["electrode"]: key for key in electrode_query.fetch("KEY")
-            }
-
-            electrode_keys.extend(
-                probe_electrodes[channel_idx] for channel_idx in lfp_channel_ind
+        query = (
+            EphysRawFile
+            & f"file_time BETWEEN '{key['start_time']}' AND '{key['end_time']}'"
+        )
+        if not query:
+            logger.info(
+                f"No raw data file found. Skip populating ephys.LFP for <{key}>"
             )
         else:
-            raise NotImplementedError(
-                f"LFP extraction from acquisition software"
-                f" of type {acq_software} is not yet implemented"
+            logger.info(f"Populating ephys.LFP for <{key}>")
+
+            # Get probe info
+            probe_info = (EphysSessionProbe & key).fetch1()
+            probe_type = (probe.Probe & {"probe": probe_info["probe"]}).fetch1(
+                "probe_type"
             )
 
-        # single insert in loop to mitigate potential memory issue
-        for electrode_key, lfp_trace in zip(electrode_keys, lfp):
-            self.Electrode.insert1({**key, **electrode_key, "lfp": lfp_trace})
+            electrode_query = probe.ElectrodeConfig.Electrode & (
+                probe.ElectrodeConfig & {"probe_type": probe_type}
+            )
+
+            # Filter for used electrodes. If probe_info["used_electrodes"] is None, it means all electrodes were used.
+            if probe_info["used_electrodes"]:
+                electrode_query &= (
+                    f'electrode IN {tuple(probe_info["used_electrodes"])}'
+                )
+
+            header = {}
+            lfp_concat = np.array([], dtype=np.float64)
+
+            for file_relpath in query.fetch("file_path", order_by="file_time"):
+                file = find_full_path(get_ephys_root_data_dir(), file_relpath)
+
+                try:
+                    data = intanrhdreader.load_file(file)
+                except OSError:
+                    raise OSError(f"OS error occurred when loading file {file.name}")
+
+                if not header:
+                    header = data.pop("header")
+                    lfp_sampling_rate = header["sample_rate"]
+                    powerline_noise_freq = (
+                        header["notch_filter_frequency"] or POWERLINE_NOISE_FREQ
+                    )  # in Hz
+                    downsample_factor = int(lfp_sampling_rate / TARGET_SAMPLING_RATE)
+
+                    # Get LFP indices (row index of the LFP matrix to be used)
+                    lfp_indices = np.array(
+                        electrode_query.fetch("channel_idx"), dtype=int
+                    )
+                    port_indices = np.array(
+                        [
+                            ind
+                            for ind, ch in enumerate(data["amplifier_channels"])
+                            if ch["port_prefix"] == probe_info["port_id"]
+                        ]
+                    )
+                    lfp_indices = np.sort(port_indices[lfp_indices])
+
+                    self.insert1(
+                        {
+                            **key,
+                            "lfp_sampling_rate": TARGET_SAMPLING_RATE,
+                        }
+                    )
+
+                    channels = np.array(
+                        [
+                            ch["native_channel_name"]
+                            for ch in data["amplifier_channels"]
+                            if ch["port_prefix"]
+                        ]
+                    )[lfp_indices]
+
+                    electrode_df = electrode_query.fetch(format="frame").reset_index()
+
+                    channel_to_electrode_map = dict(
+                        zip(electrode_df["channel_idx"], electrode_df["electrode"])
+                    )
+
+                    channel_to_electrode_map = {
+                        f'{probe_info["port_id"]}-{int(channel):03d}': electrode
+                        for channel, electrode in channel_to_electrode_map.items()
+                    }
+
+                lfps = data.pop("amplifier_data")[lfp_indices]
+                lfp_concat = (
+                    lfps if lfp_concat.size == 0 else np.hstack((lfp_concat, lfps))
+                )
+                del data
+
+            # Check for missing files or short trace durations in min
+            trace_duration = lfp_concat.shape[1] / lfp_sampling_rate / 60  # in min
+            if trace_duration != duration:
+                raise ValueError(
+                    f"Trace length ({trace_duration} min) is less than session duration"
+                )
+
+            # Single insert in loop to mitigate potential memory issue.
+            for ch, lfp in zip(channels, lfp_concat):
+                # Powerline noise removal
+                b_notch, a_notch = signal.iirnotch(
+                    w0=powerline_noise_freq, Q=30, fs=TARGET_SAMPLING_RATE
+                )
+                lfp = signal.filtfilt(b_notch, a_notch, lfp)
+
+                # Lowpass filter
+                b_butter, a_butter = signal.butter(
+                    N=4, Wn=1000, btype="lowpass", fs=TARGET_SAMPLING_RATE
+                )
+                lfp = signal.filtfilt(b_butter, a_butter, lfp)
+
+                # Downsample the signal
+                lfp = lfp[::downsample_factor]
+
+                self.Trace.insert1(
+                    {
+                        **key,
+                        "electrode_config_hash": electrode_df["electrode_config_hash"][
+                            0
+                        ],
+                        "probe_type": electrode_df["probe_type"][0],
+                        "electrode": channel_to_electrode_map[ch],
+                        "lfp": lfp,
+                    }
+                )
 
 
 # ------------ Clustering --------------
@@ -653,13 +395,13 @@ class ClusteringMethod(dj.Lookup):
     """Kilosort clustering method.
 
     Attributes:
-        clustering_method (foreign key, varchar(16) ): Kilosort clustering method.
+        clustering_method (foreign key, varchar(20) ): Kilosort clustering method.
         clustering_methods_desc (varchar(1000) ): Additional description of the clustering method.
     """
 
     definition = """
     # Method for clustering
-    clustering_method: varchar(16)
+    clustering_method: varchar(20)
     ---
     clustering_method_desc: varchar(1000)
     """
@@ -775,37 +517,47 @@ class ClusteringTask(dj.Manual):
     """A clustering task to spike sort electrophysiology datasets.
 
     Attributes:
-        EphysRecording (foreign key): EphysRecording primary key.
+        EphysSession (foreign key): EphysSession primary key.
         ClusteringParamSet (foreign key): ClusteringParamSet primary key.
         clustering_outdir_dir (varchar (255) ): Relative path to output clustering results.
-        task_mode (enum): `Trigger` computes clustering or and `load` imports existing data.
     """
 
     definition = """
     # Manual table for defining a clustering task ready to be run
-    -> EphysRecording
+    -> EphysSession
     -> ClusteringParamSet
     ---
     clustering_output_dir='': varchar(255)  #  clustering output directory relative to the clustering root data directory
-    task_mode='load': enum('load', 'trigger')  # 'load': load computed analysis results, 'trigger': trigger computation
     """
 
+    @property
+    def key_source(self):
+        return EphysSession - "session_type='lfp'"
+
     @classmethod
-    def infer_output_dir(cls, key, relative: bool = False, mkdir: bool = False):
+    def infer_output_dir(cls, key, relative=False, mkdir=False) -> pathlib.Path:
         """Infer output directory if it is not provided.
 
         Args:
             key (dict): ClusteringTask primary key.
 
         Returns:
-            Pathlib.Path: Expected clustering_output_dir based on the following convention: processed_dir / session_dir / probe_{insertion_number} / {clustering_method}_{paramset_idx}
-            e.g.: sub4/sess1/probe_2/kilosort2_0
+            Expected clustering_output_dir based on the following convention:
+                processed_dir / subject_dir / {clustering_method}_{paramset_idx}
+                e.g.: sub4/sess1/kilosort2_0
         """
         processed_dir = pathlib.Path(get_processed_root_data_dir())
-        session_dir = find_full_path(
-            get_ephys_root_data_dir(), get_session_directory(key)
+        exp_dir = find_full_path(get_ephys_root_data_dir(), get_organoid_directory(key))
+
+        session_time = "_".join(
+            [
+                key["start_time"].strftime("%Y%m%d%H%M"),
+                key["end_time"].strftime("%Y%m%d%H%M"),
+            ]
         )
-        root_dir = find_root_directory(get_ephys_root_data_dir(), session_dir)
+
+        session_dir = exp_dir / session_time / key["organoid_id"]
+        root_dir = find_root_directory(get_ephys_root_data_dir(), exp_dir)
 
         method = (
             (ClusteringParamSet * ClusteringMethod & key)
@@ -816,7 +568,6 @@ class ClusteringTask(dj.Manual):
         output_dir = (
             processed_dir
             / session_dir.relative_to(root_dir)
-            / f'probe_{key["insertion_number"]}'
             / f'{method}_{key["paramset_idx"]}'
         )
 
@@ -831,7 +582,7 @@ class ClusteringTask(dj.Manual):
         """Autogenerate entries based on a particular ephys recording.
 
         Args:
-            ephys_recording_key (dict): EphysRecording primary key.
+            ephys_recording_key (dict): EphysSession primary key.
             paramset_idx (int, optional): Parameter index to use for clustering task. Defaults to 0.
         """
         key = {**ephys_recording_key, "paramset_idx": paramset_idx}
@@ -839,22 +590,12 @@ class ClusteringTask(dj.Manual):
         processed_dir = get_processed_root_data_dir()
         output_dir = ClusteringTask.infer_output_dir(key, relative=False, mkdir=True)
 
-        try:
-            kilosort.Kilosort(
-                output_dir
-            )  # check if the directory is a valid Kilosort output
-        except FileNotFoundError:
-            task_mode = "trigger"
-        else:
-            task_mode = "load"
-
         cls.insert1(
             {
                 **key,
                 "clustering_output_dir": output_dir.relative_to(
                     processed_dir
                 ).as_posix(),
-                "task_mode": task_mode,
             }
         )
 
@@ -878,105 +619,8 @@ class Clustering(dj.Imported):
     """
 
     def make(self, key):
-        """Triggers or imports clustering analysis."""
-        task_mode, output_dir = (ClusteringTask & key).fetch1(
-            "task_mode", "clustering_output_dir"
-        )
-
-        if not output_dir:
-            output_dir = ClusteringTask.infer_output_dir(key, relative=True, mkdir=True)
-            # update clustering_output_dir
-            ClusteringTask.update1(
-                {**key, "clustering_output_dir": output_dir.as_posix()}
-            )
-
-        kilosort_dir = find_full_path(get_ephys_root_data_dir(), output_dir)
-
-        if task_mode == "load":
-            kilosort.Kilosort(
-                kilosort_dir
-            )  # check if the directory is a valid Kilosort output
-        elif task_mode == "trigger":
-            acq_software, clustering_method, params = (
-                ClusteringTask * EphysRecording * ClusteringParamSet & key
-            ).fetch1("acq_software", "clustering_method", "params")
-
-            if "kilosort" in clustering_method:
-                from element_array_ephys.readers import kilosort_triggering
-
-                # add additional probe-recording and channels details into `params`
-                params = {**params, **get_recording_channels_details(key)}
-                params["fs"] = params["sample_rate"]
-
-                if acq_software == "SpikeGLX":
-                    spikeglx_meta_filepath = get_spikeglx_meta_filepath(key)
-                    spikeglx_recording = spikeglx.SpikeGLX(
-                        spikeglx_meta_filepath.parent
-                    )
-                    spikeglx_recording.validate_file("ap")
-
-                    if clustering_method.startswith("pykilosort"):
-                        kilosort_triggering.run_pykilosort(
-                            continuous_file=spikeglx_recording.root_dir
-                            / (spikeglx_recording.root_name + ".ap.bin"),
-                            kilosort_output_directory=kilosort_dir,
-                            channel_ind=params.pop("channel_ind"),
-                            x_coords=params.pop("x_coords"),
-                            y_coords=params.pop("y_coords"),
-                            shank_ind=params.pop("shank_ind"),
-                            connected=params.pop("connected"),
-                            sample_rate=params.pop("sample_rate"),
-                            params=params,
-                        )
-                    else:
-                        run_kilosort = kilosort_triggering.SGLXKilosortPipeline(
-                            npx_input_dir=spikeglx_meta_filepath.parent,
-                            ks_output_dir=kilosort_dir,
-                            params=params,
-                            KS2ver=f'{Decimal(clustering_method.replace("kilosort", "")):.1f}',
-                            run_CatGT=True,
-                        )
-                        run_kilosort.run_modules()
-                elif acq_software == "Open Ephys":
-                    oe_probe = get_openephys_probe_data(key)
-
-                    assert len(oe_probe.recording_info["recording_files"]) == 1
-
-                    # run kilosort
-                    if clustering_method.startswith("pykilosort"):
-                        kilosort_triggering.run_pykilosort(
-                            continuous_file=pathlib.Path(
-                                oe_probe.recording_info["recording_files"][0]
-                            )
-                            / "continuous.dat",
-                            kilosort_output_directory=kilosort_dir,
-                            channel_ind=params.pop("channel_ind"),
-                            x_coords=params.pop("x_coords"),
-                            y_coords=params.pop("y_coords"),
-                            shank_ind=params.pop("shank_ind"),
-                            connected=params.pop("connected"),
-                            sample_rate=params.pop("sample_rate"),
-                            params=params,
-                        )
-                    else:
-                        run_kilosort = kilosort_triggering.OpenEphysKilosortPipeline(
-                            npx_input_dir=oe_probe.recording_info["recording_files"][0],
-                            ks_output_dir=kilosort_dir,
-                            params=params,
-                            KS2ver=f'{Decimal(clustering_method.replace("kilosort", "")):.1f}',
-                        )
-                        run_kilosort.run_modules()
-            else:
-                raise NotImplementedError(
-                    f"Automatic triggering of {clustering_method}"
-                    f" clustering analysis is not yet supported"
-                )
-
-        else:
-            raise ValueError(f"Unknown task mode: {task_mode}")
-
-        creation_time, _, _ = kilosort.extract_clustering_info(kilosort_dir)
-        self.insert1({**key, "clustering_time": creation_time, "package_version": ""})
+        """This will be implemented via si_spike_sorting tables."""
+        pass
 
 
 @schema
@@ -1026,12 +670,28 @@ class CuratedClustering(dj.Imported):
         ).fetch1("clustering_method", "clustering_output_dir")
         output_dir = find_full_path(get_ephys_root_data_dir(), output_dir)
 
-        # Get channel and electrode-site mapping
-        electrode_query = (EphysRecording.Channel & key).proj(..., "-channel_name")
+        # Get electrode & channel info
+        probe_info = (probe.Probe * EphysSessionProbe & key).fetch1()
+
+        electrode_config_key = (probe.ElectrodeConfig & probe_info).fetch1("KEY")
+
+        electrode_query = (
+                probe.ProbeType.Electrode * probe.ElectrodeConfig.Electrode
+                & electrode_config_key
+        )
+
+        # Filter for used electrodes. If probe_info["used_electrodes"] is None, it means all electrodes were used.
+        number_of_electrodes = len(electrode_query)
+        probe_info["used_electrodes"] = (
+            probe_info["used_electrodes"]
+            if probe_info["used_electrodes"] is not None
+            else list(range(number_of_electrodes))
+        )
+        electrode_query &= f"electrode IN {tuple(probe_info['used_electrodes'])}"
         channel2electrode_map = electrode_query.fetch(as_dict=True)
         channel2electrode_map: dict[int, dict] = {
             chn.pop("channel_idx"): chn for chn in channel2electrode_map
-        }
+        }  # e.g., {0: {'organoid_id': 'O09',
 
         # Get sorter method and create output directory.
         sorter_name = clustering_method.replace(".", "_")
@@ -1056,7 +716,7 @@ class CuratedClustering(dj.Imported):
 
             # reorder channel2electrode_map according to recording channel ids
             channel2electrode_map = {
-                chn_idx: channel2electrode_map[chn_idx]
+                chn_idx: channel2electrode_map[int(chn_idx)]
                 for chn_idx in sorting_analyzer.channel_ids_to_indices(
                     sorting_analyzer.channel_ids
                 )
@@ -1104,75 +764,7 @@ class CuratedClustering(dj.Imported):
                     }
                 )
         else:  # read from kilosort outputs
-            kilosort_dataset = kilosort.Kilosort(output_dir)
-            acq_software, sample_rate = (EphysRecording & key).fetch1(
-                "acq_software", "sampling_rate"
-            )
-
-            sample_rate = kilosort_dataset.data["params"].get(
-                "sample_rate", sample_rate
-            )
-
-            # ---------- Unit ----------
-            # -- Remove 0-spike units
-            withspike_idx = [
-                i
-                for i, u in enumerate(kilosort_dataset.data["cluster_ids"])
-                if (kilosort_dataset.data["spike_clusters"] == u).any()
-            ]
-            valid_units = kilosort_dataset.data["cluster_ids"][withspike_idx]
-            valid_unit_labels = kilosort_dataset.data["cluster_groups"][withspike_idx]
-
-            # -- Spike-times --
-            # spike_times_sec_adj > spike_times_sec > spike_times
-            spike_time_key = (
-                "spike_times_sec_adj"
-                if "spike_times_sec_adj" in kilosort_dataset.data
-                else (
-                    "spike_times_sec"
-                    if "spike_times_sec" in kilosort_dataset.data
-                    else "spike_times"
-                )
-            )
-            spike_times = kilosort_dataset.data[spike_time_key]
-            kilosort_dataset.extract_spike_depths()
-
-            # -- Spike-sites and Spike-depths --
-            spike_sites = np.array(
-                [
-                    channel2electrode_map[s]["electrode"]
-                    for s in kilosort_dataset.data["spike_sites"]
-                ]
-            )
-            spike_depths = kilosort_dataset.data["spike_depths"]
-
-            # -- Insert unit, label, peak-chn
-            units = []
-            for unit, unit_lbl in zip(valid_units, valid_unit_labels):
-                if (kilosort_dataset.data["spike_clusters"] == unit).any():
-                    unit_channel, _ = kilosort_dataset.get_best_channel(unit)
-                    unit_spike_times = (
-                        spike_times[kilosort_dataset.data["spike_clusters"] == unit]
-                        / sample_rate
-                    )
-                    spike_count = len(unit_spike_times)
-
-                    units.append(
-                        {
-                            **key,
-                            "unit": unit,
-                            "cluster_quality_label": unit_lbl,
-                            **channel2electrode_map[unit_channel],
-                            "spike_times": unit_spike_times,
-                            "spike_count": spike_count,
-                            "spike_sites": spike_sites[
-                                kilosort_dataset.data["spike_clusters"] == unit
-                            ],
-                            "spike_depths": spike_depths[
-                                kilosort_dataset.data["spike_clusters"] == unit
-                            ],
-                        }
-                    )
+            raise NotImplementedError
 
         self.insert1(key)
         self.Unit.insert(units, ignore_extra_fields=True)
@@ -1237,12 +829,22 @@ class WaveformSet(dj.Imported):
         output_dir = find_full_path(get_ephys_root_data_dir(), output_dir)
         sorter_name = clustering_method.replace(".", "_")
 
-        # Get channel and electrode-site mapping
-        electrode_query = (EphysRecording.Channel & key).proj(..., "-channel_name")
+        # Get electrode & channel info
+        probe_info = (probe.Probe * EphysSessionProbe & key).fetch1()
+        electrode_query = probe.ElectrodeConfig.Electrode & probe_info
+
+        # Filter for used electrodes. If probe_info["used_electrodes"] is None, it means all electrodes were used.
+        number_of_electrodes = len(electrode_query)
+        probe_info["used_electrodes"] = (
+            probe_info["used_electrodes"]
+            if probe_info["used_electrodes"] is not None
+            else list(range(number_of_electrodes))
+        )
+        electrode_query &= f"electrode IN {tuple(probe_info['used_electrodes'])}"
         channel2electrode_map = electrode_query.fetch(as_dict=True)
         channel2electrode_map: dict[int, dict] = {
             chn.pop("channel_idx"): chn for chn in channel2electrode_map
-        }
+        }  # e.g., {0: {'organoid_id': 'O09',
 
         si_sorting_analyzer_dir = output_dir / sorter_name / "sorting_analyzer"
         if si_sorting_analyzer_dir.exists():  # read from spikeinterface outputs
@@ -1263,7 +865,7 @@ class WaveformSet(dj.Imported):
                 sorting_analyzer.channel_ids
             ).tolist()
             channel2electrode_map = {
-                chn_idx: channel2electrode_map[chn_idx] for chn_idx in channel_indices
+                chn_idx: channel2electrode_map[int(chn_idx)] for chn_idx in channel_indices
             }
 
             templates = sorting_analyzer.get_extension("templates")
@@ -1296,102 +898,7 @@ class WaveformSet(dj.Imported):
                     yield unit_peak_waveform, unit_electrode_waveforms
 
         else:  # read from kilosort outputs (ecephys pipeline)
-            kilosort_dataset = kilosort.Kilosort(output_dir)
-
-            acq_software, probe_serial_number = (
-                EphysRecording * ProbeInsertion & key
-            ).fetch1("acq_software", "probe")
-
-            # Get all units
-            units = {
-                u["unit"]: u
-                for u in (CuratedClustering.Unit & key).fetch(
-                    as_dict=True, order_by="unit"
-                )
-            }
-
-            if (output_dir / "mean_waveforms.npy").exists():
-                unit_waveforms = np.load(
-                    output_dir / "mean_waveforms.npy"
-                )  # unit x channel x sample
-
-                def yield_unit_waveforms():
-                    for unit_no, unit_waveform in zip(
-                        kilosort_dataset.data["cluster_ids"], unit_waveforms
-                    ):
-                        unit_peak_waveform = {}
-                        unit_electrode_waveforms = []
-                        if unit_no in units:
-                            for channel, channel_waveform in zip(
-                                kilosort_dataset.data["channel_map"], unit_waveform
-                            ):
-                                unit_electrode_waveforms.append(
-                                    {
-                                        **units[unit_no],
-                                        **channel2electrode_map[channel],
-                                        "waveform_mean": channel_waveform,
-                                    }
-                                )
-                                if (
-                                    channel2electrode_map[channel]["electrode"]
-                                    == units[unit_no]["electrode"]
-                                ):
-                                    unit_peak_waveform = {
-                                        **units[unit_no],
-                                        "peak_electrode_waveform": channel_waveform,
-                                    }
-                        yield unit_peak_waveform, unit_electrode_waveforms
-
-            else:
-                if acq_software == "SpikeGLX":
-                    spikeglx_meta_filepath = get_spikeglx_meta_filepath(key)
-                    neuropixels_recording = spikeglx.SpikeGLX(
-                        spikeglx_meta_filepath.parent
-                    )
-                elif acq_software == "Open Ephys":
-                    session_dir = find_full_path(
-                        get_ephys_root_data_dir(), get_session_directory(key)
-                    )
-                    openephys_dataset = openephys.OpenEphys(session_dir)
-                    neuropixels_recording = openephys_dataset.probes[
-                        probe_serial_number
-                    ]
-
-                def yield_unit_waveforms():
-                    for unit_dict in units.values():
-                        unit_peak_waveform = {}
-                        unit_electrode_waveforms = []
-
-                        spikes = unit_dict["spike_times"]
-                        waveforms = neuropixels_recording.extract_spike_waveforms(
-                            spikes, kilosort_dataset.data["channel_map"]
-                        )  # (sample x channel x spike)
-                        waveforms = waveforms.transpose(
-                            (1, 2, 0)
-                        )  # (channel x spike x sample)
-                        for channel, channel_waveform in zip(
-                            kilosort_dataset.data["channel_map"], waveforms
-                        ):
-                            unit_electrode_waveforms.append(
-                                {
-                                    **unit_dict,
-                                    **channel2electrode_map[channel],
-                                    "waveform_mean": channel_waveform.mean(axis=0),
-                                    "waveforms": channel_waveform,
-                                }
-                            )
-                            if (
-                                channel2electrode_map[channel]["electrode"]
-                                == unit_dict["electrode"]
-                            ):
-                                unit_peak_waveform = {
-                                    **unit_dict,
-                                    "peak_electrode_waveform": channel_waveform.mean(
-                                        axis=0
-                                    ),
-                                }
-
-                        yield unit_peak_waveform, unit_electrode_waveforms
+            raise NotImplementedError
 
         # insert waveform on a per-unit basis to mitigate potential memory issue
         self.insert1(key)
@@ -1528,27 +1035,7 @@ class QualityMetrics(dj.Imported):
                 inplace=True,
             )
         else:  # read from kilosort outputs (ecephys pipeline)
-            # find metric_fp
-            for metric_fp in [
-                output_dir / "metrics.csv",
-            ]:
-                if metric_fp.exists():
-                    break
-            else:
-                raise FileNotFoundError(f"QC metrics file not found in: {output_dir}")
-
-            metrics_df = pd.read_csv(metric_fp)
-
-            # Conform the dataframe to match the table definition
-            if "cluster_id" in metrics_df.columns:
-                metrics_df.set_index("cluster_id", inplace=True)
-            else:
-                metrics_df.rename(
-                    columns={metrics_df.columns[0]: "cluster_id"}, inplace=True
-                )
-                metrics_df.set_index("cluster_id", inplace=True)
-
-            metrics_df.columns = metrics_df.columns.str.lower()
+            raise NotImplementedError
 
         metrics_df.replace([np.inf, -np.inf], np.nan, inplace=True)
         metrics_list = [
@@ -1559,161 +1046,3 @@ class QualityMetrics(dj.Imported):
         self.insert1(key)
         self.Cluster.insert(metrics_list, ignore_extra_fields=True)
         self.Waveform.insert(metrics_list, ignore_extra_fields=True)
-
-
-# ---------------- HELPER FUNCTIONS ----------------
-
-
-def get_spikeglx_meta_filepath(ephys_recording_key: dict) -> str:
-    """Get spikeGLX data filepath."""
-    # attempt to retrieve from EphysRecording.EphysFile
-    spikeglx_meta_filepath = pathlib.Path(
-        (
-            EphysRecording.EphysFile
-            & ephys_recording_key
-            & 'file_path LIKE "%.ap.meta"'
-        ).fetch1("file_path")
-    )
-
-    try:
-        spikeglx_meta_filepath = find_full_path(
-            get_ephys_root_data_dir(), spikeglx_meta_filepath
-        )
-    except FileNotFoundError:
-        # if not found, search in session_dir again
-        if not spikeglx_meta_filepath.exists():
-            session_dir = find_full_path(
-                get_ephys_root_data_dir(), get_session_directory(ephys_recording_key)
-            )
-            inserted_probe_serial_number = (
-                ProbeInsertion * probe.Probe & ephys_recording_key
-            ).fetch1("probe")
-
-            spikeglx_meta_filepaths = [fp for fp in session_dir.rglob("*.ap.meta")]
-            for meta_filepath in spikeglx_meta_filepaths:
-                spikeglx_meta = spikeglx.SpikeGLXMeta(meta_filepath)
-                if str(spikeglx_meta.probe_SN) == inserted_probe_serial_number:
-                    spikeglx_meta_filepath = meta_filepath
-                    break
-            else:
-                raise FileNotFoundError(
-                    "No SpikeGLX data found for probe insertion: {}".format(
-                        ephys_recording_key
-                    )
-                )
-
-    return spikeglx_meta_filepath
-
-
-def get_openephys_probe_data(ephys_recording_key: dict) -> list:
-    """Get OpenEphys probe data from file."""
-    inserted_probe_serial_number = (
-        ProbeInsertion * probe.Probe & ephys_recording_key
-    ).fetch1("probe")
-    session_dir = find_full_path(
-        get_ephys_root_data_dir(), get_session_directory(ephys_recording_key)
-    )
-    loaded_oe = openephys.OpenEphys(session_dir)
-    probe_data = loaded_oe.probes[inserted_probe_serial_number]
-
-    # explicitly garbage collect "loaded_oe"
-    # as these may have large memory footprint and may not be cleared fast enough
-    del loaded_oe
-    gc.collect()
-
-    return probe_data
-
-
-def get_recording_channels_details(ephys_recording_key: dict) -> np.array:
-    """Get details of recording channels for a given recording."""
-    channels_details = {}
-
-    acq_software, sample_rate = (EphysRecording & ephys_recording_key).fetch1(
-        "acq_software", "sampling_rate"
-    )
-
-    probe_type = (ProbeInsertion * probe.Probe & ephys_recording_key).fetch1(
-        "probe_type"
-    )
-    channels_details["probe_type"] = {
-        "neuropixels 1.0 - 3A": "3A",
-        "neuropixels 1.0 - 3B": "NP1",
-        "neuropixels UHD": "NP1100",
-        "neuropixels 2.0 - SS": "NP21",
-        "neuropixels 2.0 - MS": "NP24",
-    }[probe_type]
-
-    electrode_config_key = (
-        probe.ElectrodeConfig * EphysRecording & ephys_recording_key
-    ).fetch1("KEY")
-    (
-        channels_details["channel_ind"],
-        channels_details["x_coords"],
-        channels_details["y_coords"],
-        channels_details["shank_ind"],
-    ) = (
-        probe.ElectrodeConfig.Electrode * probe.ProbeType.Electrode
-        & electrode_config_key
-    ).fetch(
-        "electrode", "x_coord", "y_coord", "shank"
-    )
-    channels_details["sample_rate"] = sample_rate
-    channels_details["num_channels"] = len(channels_details["channel_ind"])
-
-    if acq_software == "SpikeGLX":
-        spikeglx_meta_filepath = get_spikeglx_meta_filepath(ephys_recording_key)
-        spikeglx_recording = spikeglx.SpikeGLX(spikeglx_meta_filepath.parent)
-        channels_details["uVPerBit"] = spikeglx_recording.get_channel_bit_volts("ap")[0]
-        channels_details["connected"] = np.array(
-            [v for *_, v in spikeglx_recording.apmeta.shankmap["data"]]
-        )
-    elif acq_software == "Open Ephys":
-        oe_probe = get_openephys_probe_data(ephys_recording_key)
-        channels_details["uVPerBit"] = oe_probe.ap_meta["channels_gains"][0]
-        channels_details["connected"] = np.array(
-            [
-                int(v == 1)
-                for c, v in oe_probe.channels_connected.items()
-                if c in channels_details["channel_ind"]
-            ]
-        )
-
-    return channels_details
-
-
-def generate_electrode_config_entry(probe_type: str, electrode_keys: list) -> dict:
-    """Generate and insert new ElectrodeConfig
-
-    Args:
-        probe_type (str): probe type (e.g. neuropixels 2.0 - SS)
-        electrode_keys (list): list of keys of the probe.ProbeType.Electrode table
-
-    Returns:
-        dict: representing a key of the probe.ElectrodeConfig table
-    """
-    # compute hash for the electrode config (hash of dict of all ElectrodeConfig.Electrode)
-    electrode_config_hash = dict_to_uuid({k["electrode"]: k for k in electrode_keys})
-
-    electrode_list = sorted([k["electrode"] for k in electrode_keys])
-    electrode_gaps = (
-        [-1]
-        + np.where(np.diff(electrode_list) > 1)[0].tolist()
-        + [len(electrode_list) - 1]
-    )
-    electrode_config_name = "; ".join(
-        [
-            f"{electrode_list[start + 1]}-{electrode_list[end]}"
-            for start, end in zip(electrode_gaps[:-1], electrode_gaps[1:])
-        ]
-    )
-    electrode_config_key = {"electrode_config_hash": electrode_config_hash}
-    econfig_entry = {
-        **electrode_config_key,
-        "probe_type": probe_type,
-        "electrode_config_name": electrode_config_name,
-    }
-    econfig_electrodes = [
-        {**electrode, **electrode_config_key} for electrode in electrode_keys
-    ]
-
-    return econfig_entry, econfig_electrodes
