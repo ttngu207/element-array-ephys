@@ -676,8 +676,8 @@ class CuratedClustering(dj.Imported):
         electrode_config_key = (probe.ElectrodeConfig & probe_info).fetch1("KEY")
 
         electrode_query = (
-                probe.ProbeType.Electrode * probe.ElectrodeConfig.Electrode
-                & electrode_config_key
+            probe.ProbeType.Electrode * probe.ElectrodeConfig.Electrode
+            & electrode_config_key
         )
 
         # Filter for used electrodes. If probe_info["used_electrodes"] is None, it means all electrodes were used.
@@ -709,7 +709,9 @@ class CuratedClustering(dj.Imported):
                     sorting_analyzer, 1, peak_sign="neg"
                 ).unit_id_to_channel_indices
             )
-            unit_peak_channel: dict[int, int] = {u: chn[0] for u, chn in unit_peak_channel.items()}
+            unit_peak_channel: dict[int, int] = {
+                u: chn[0] for u, chn in unit_peak_channel.items()
+            }
 
             spike_count_dict: dict[int, int] = si_sorting.count_num_spikes_per_unit()
             # {unit: spike_count}
@@ -747,7 +749,9 @@ class CuratedClustering(dj.Imported):
                 )
                 unit_spikes_loc = spike_locations.get_data()[unit_spikes_df.index]
                 _, spike_depths = zip(*unit_spikes_loc)  # x-coordinates, y-coordinates
-                spike_times = si_sorting.get_unit_spike_train(unit_id, return_times=True)
+                spike_times = si_sorting.get_unit_spike_train(
+                    unit_id, return_times=True
+                )
 
                 assert len(spike_times) == len(spike_sites) == len(spike_depths)
 
@@ -849,7 +853,7 @@ class WaveformSet(dj.Imported):
         si_sorting_analyzer_dir = output_dir / sorter_name / "sorting_analyzer"
         if si_sorting_analyzer_dir.exists():  # read from spikeinterface outputs
             import spikeinterface as si
-            
+
             sorting_analyzer = si.load_sorting_analyzer(folder=si_sorting_analyzer_dir)
 
             # Find representative channel for each unit
@@ -865,7 +869,8 @@ class WaveformSet(dj.Imported):
                 sorting_analyzer.channel_ids
             ).tolist()
             channel2electrode_map = {
-                chn_idx: channel2electrode_map[int(chn_idx)] for chn_idx in channel_indices
+                chn_idx: channel2electrode_map[int(chn_idx)]
+                for chn_idx in channel_indices
             }
 
             templates = sorting_analyzer.get_extension("templates")
@@ -1011,7 +1016,7 @@ class QualityMetrics(dj.Imported):
         si_sorting_analyzer_dir = output_dir / sorter_name / "sorting_analyzer"
         if si_sorting_analyzer_dir.exists():  # read from spikeinterface outputs
             import spikeinterface as si
-            
+
             sorting_analyzer = si.load_sorting_analyzer(folder=si_sorting_analyzer_dir)
             qc_metrics = sorting_analyzer.get_extension("quality_metrics").get_data()
             template_metrics = sorting_analyzer.get_extension(
