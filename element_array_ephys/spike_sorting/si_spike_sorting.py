@@ -301,7 +301,6 @@ class PostProcessing(dj.Imported):
         ).fetch1("clustering_method", "clustering_output_dir", "params")
         output_dir = find_full_path(ephys.get_ephys_root_data_dir(), output_dir)
         sorter_name = clustering_method.replace(".", "_")
-        output_dir = find_full_path(ephys.get_ephys_root_data_dir(), output_dir)
 
         recording_file = output_dir / sorter_name / "recording" / "si_recording.pkl"
         sorting_file = output_dir / sorter_name / "spike_sorting" / "si_sorting.pkl"
