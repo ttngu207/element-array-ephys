@@ -187,10 +187,7 @@ class PreProcessing(dj.Imported):
 
         # Account for additional electrodes being removed
         if unused_electrodes:
-            electrode_to_index_map = dict(
-                zip(electrodes_df["electrode"], electrodes_df["channel_idx"])
-            )  # electrode to channel index (data row index)
-            chn_ids_to_remove = [f"{probe_info['port_id']}-{electrode_to_index_map[elec]:03d}"
+            chn_ids_to_remove = [f"{probe_info['port_id']}-{electrodes_df.channel_idx.iloc[elec]:03d}"
                                  for elec in unused_electrodes]
         else:
             chn_ids_to_remove = []
