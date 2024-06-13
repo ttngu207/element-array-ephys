@@ -116,6 +116,18 @@ def get_processed_root_data_dir() -> str:
         return get_ephys_root_data_dir()[0]
 
 
+def get_sync_ephys_function(ephys_recording_key: dict):
+    """Retrieve the synchronization function for the specified ephys recording.
+
+    Args:
+        ephys_recording_key (dict): A dictionary containing the primary key for the EphysRecording table.
+
+    Returns:
+        A function that can be used to synchronize timestamps of the ephys recording (and spikes) to the primary clock.
+    """
+    return _linking_module.get_sync_ephys_function(ephys_recording_key)
+
+
 # ----------------------------- Table declarations ----------------------
 
 
@@ -1074,6 +1086,8 @@ class CuratedClustering(dj.Imported):
             spike_locations = sorting_analyzer.get_extension("spike_locations")
             spikes_df = pd.DataFrame(spike_locations.spikes)
 
+            ephys_sync_func = get_sync_ephys_function(key)
+
             units = []
             for unit_idx, unit_id in enumerate(si_sorting.unit_ids):
                 unit_id = int(unit_id)
@@ -1089,6 +1103,7 @@ class CuratedClustering(dj.Imported):
                 spike_times = si_sorting.get_unit_spike_train(
                     unit_id, return_times=True
                 )
+                spike_times = ephys_sync_func(spike_times)
 
                 assert len(spike_times) == len(spike_sites) == len(spike_depths)
 
