@@ -1,1 +1,1 @@
-from . import ephys_acute as ephys
+from . import ephys_no_curation as ephys
