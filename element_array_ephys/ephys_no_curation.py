@@ -553,16 +553,23 @@ class LFP(dj.Imported):
         lfp: longblob               # (uV) recorded lfp at this electrode 
         """
 
-    # Only store LFP for every 9th channel, due to high channel density,
-    # close-by channels exhibit highly similar LFP
-    _skip_channel_counts = 9
-
     def make(self, key):
         """Populates the LFP tables."""
         acq_software = (EphysRecording * ProbeInsertion & key).fetch1("acq_software")
 
-        electrode_keys, lfp = [], []
+        # Get probe information to recording object
+        electrodes_df = (
+            (
+                EphysRecording.Channel
+                * probe.ElectrodeConfig.Electrode
+                * probe.ProbeType.Electrode
+                & key
+            )
+            .fetch(format="frame")
+            .reset_index()
+        )
 
+        electrode_keys, lfp = [], []
         if acq_software == "SpikeGLX":
             spikeglx_meta_filepath = get_spikeglx_meta_filepath(key)
             spikeglx_recording = spikeglx.SpikeGLX(spikeglx_meta_filepath.parent)
@@ -609,51 +616,53 @@ class LFP(dj.Imported):
                     "data"
                 ][recorded_site]
                 electrode_keys.append(probe_electrodes[(shank, shank_col, shank_row)])
-        elif acq_software == "Open Ephys":
-            oe_probe = get_openephys_probe_data(key)
+        elif acq_software == "Trellis":
+            import spikeinterface as si
 
-            lfp_channel_ind = np.r_[
-                len(oe_probe.lfp_meta["channels_indices"])
-                - 1 : 0 : -self._skip_channel_counts
+            si_extractor: si.extractors.neoextractors = (
+                si.extractors.extractorlist.recording_extractor_full_dict["blackrock"]
+            )
+
+            nsx2_relpaths = (EphysRecording.EphysFile & key).fetch("file_path")
+            nsx2_fullpaths = [
+                find_full_path(get_ephys_root_data_dir(), f + ".ns2")
+                for f in nsx2_relpaths
             ]
+            si_recs = []
+            for f in nsx2_fullpaths:
+                si_rec = si_extractor(file_path=f, stream_name="nsx2")
+                # find & remove non-ephys channels
+                non_ephys_chns = set(si_rec.channel_ids) - set(
+                    (electrodes_df.channel_idx.values + 1).astype(str)
+                )
+                si_recs.append(si_rec.remove_channels(list(non_ephys_chns)))
+            si_recording = si.concatenate_recordings(si_recs)
 
-            lfp = oe_probe.lfp_timeseries[:, lfp_channel_ind]  # (sample x channel)
-            lfp = (
-                lfp * np.array(oe_probe.lfp_meta["channels_gains"])[lfp_channel_ind]
-            ).T  # (channel x sample)
-            lfp_timestamps = oe_probe.lfp_timestamps
+            ephys_sync_func = get_sync_ephys_function(key)
+            synced_timestamps = ephys_sync_func(si_recording.get_times())
 
             self.insert1(
                 dict(
                     key,
-                    lfp_sampling_rate=oe_probe.lfp_meta["sample_rate"],
-                    lfp_time_stamps=lfp_timestamps,
-                    lfp_mean=lfp.mean(axis=0),
+                    lfp_sampling_rate=si_recording.sampling_frequency,
+                    lfp_time_stamps=synced_timestamps,
+                    lfp_mean=si_recording.get_traces(return_scaled=True).mean(axis=1),
                 )
             )
-
-            electrode_query = (
-                probe.ProbeType.Electrode
-                * probe.ElectrodeConfig.Electrode
-                * EphysRecording
-                & key
-            )
-            probe_electrodes = {
-                key["electrode"]: key for key in electrode_query.fetch("KEY")
-            }
-
-            electrode_keys.extend(
-                probe_electrodes[channel_idx] for channel_idx in lfp_channel_ind
-            )
+            # single insert in loop to mitigate potential memory issue
+            for chn_idx in range(si_recording.get_num_channels()):
+                chn_id = si_recording.channel_ids[chn_idx]
+                lfp = si_recording.get_traces(channel_ids=[chn_id], return_scaled=True).flatten()
+                electrode_key = dict(electrodes_df.query(f"channel_idx == {chn_idx}").iloc[0])
+                self.Electrode.insert1({
+                    **key,
+                    **electrode_key,
+                    "lfp": lfp}, ignore_extra_fields=True)
         else:
             raise NotImplementedError(
                 f"LFP extraction from acquisition software"
                 f" of type {acq_software} is not yet implemented"
             )
-
-        # single insert in loop to mitigate potential memory issue
-        for electrode_key, lfp_trace in zip(electrode_keys, lfp):
-            self.Electrode.insert1({**key, **electrode_key, "lfp": lfp_trace})
 
 
 # ------------ Clustering --------------
