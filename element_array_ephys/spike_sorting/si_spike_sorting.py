@@ -45,7 +45,7 @@ def activate(
     ephys.Clustering.key_source -= PreProcessing.key_source.proj()
 
 
-SI_SORTERS = [s.replace("_", ".") for s in si.sorters.sorter_dict.keys()]
+SI_SORTERS = [s.replace("_", ".") for s in si.sorters.sorter_dict.keys()] + ['consensus']
 
 
 @schema
@@ -186,37 +186,78 @@ class SIClustering(dj.Imported):
             ephys.ClusteringTask * ephys.ClusteringParamSet & key
         ).fetch1("clustering_method", "clustering_output_dir", "params")
         output_dir = find_full_path(ephys.get_ephys_root_data_dir(), output_dir)
-        sorter_name = clustering_method.replace(".", "_")
-        recording_file = output_dir / sorter_name / "recording" / "si_recording.pkl"
+        clustering_method = clustering_method.replace(".", "_")
+        recording_file = output_dir / clustering_method / "recording" / "si_recording.pkl"
         si_recording: si.BaseRecording = si.load_extractor(
             recording_file, base_folder=output_dir
         )
 
         sorting_params = params["SI_SORTING_PARAMS"]
-        sorting_output_dir = output_dir / sorter_name / "spike_sorting"
+        sorters_to_run = []
 
-        # Run sorting
-        @memoized_result(
-            uniqueness_dict=sorting_params,
-            output_directory=sorting_output_dir,
-        )
-        def _run_sorter():
-            # Sorting performed in a dedicated docker environment if the sorter is not built in the spikeinterface package.
-            si_sorting: si.sorters.BaseSorter = si.sorters.run_sorter(
-                sorter_name=sorter_name,
-                recording=si_recording,
-                folder=sorting_output_dir,
-                remove_existing_folder=True,
-                verbose=True,
-                docker_image=sorter_name not in si.sorters.installed_sorters(),
-                **sorting_params,
+        if clustering_method == "consensus":
+            assert isinstance(sorting_params, list), "Consensus method requires a list of each sorter's parameters"
+            for param_set in sorting_params:
+                sorters_to_run.append({
+                    'sorter_name': param_set['sorter_name'].replace(".", "_"),
+                    'sorting_output_dir': output_dir / clustering_method / param_set['sorter_name'] / "spike_sorting",
+                    'sorter_params': param_set['sorter_params'],
+                })
+        else:
+            assert isinstance(sorting_params, dict), "Single sorter methods requires a dict of sorting parameters"
+            sorters_to_run = [{
+                'sorter_name': clustering_method,
+                'sorting_output_dir': output_dir / clustering_method / "spike_sorting",
+                'sorter_params': sorting_params,
+            }]
+
+        sorter_objects = []
+        sorter_names = []
+        for i, sorter in enumerate(sorters_to_run):
+            # Run sorting
+            @memoized_result(
+                uniqueness_dict=sorter['sorter_params'],
+                output_directory=sorter['sorting_output_dir'],
             )
+            def _run_sorter():
+                # Sorting performed in a dedicated docker environment if the sorter is not built in the spikeinterface package.
+                si_sorting: si.sorters.BaseSorter = si.sorters.run_sorter(
+                    sorter_name=sorter['sorter_name'],
+                    recording=si_recording,
+                    folder=sorter['sorting_output_dir'],
+                    remove_existing_folder=True,
+                    verbose=True,
+                    docker_image=sorter['sorter_name'] not in si.sorters.installed_sorters(),
+                    **sorter['sorter_params'],
+                )
 
-            # Save sorting object
-            sorting_save_path = sorting_output_dir / "si_sorting.pkl"
-            si_sorting.dump_to_pickle(sorting_save_path, relative_to=output_dir)
+                # Save sorting object
+                sorting_save_path = sorter['sorting_output_dir'] / "si_sorting.pkl"
+                si_sorting.dump_to_pickle(sorting_save_path, relative_to=output_dir)
+                return si_sorting
 
-        _run_sorter()
+            sorter_objects.append(_run_sorter())
+            sorter_names.append(f"{sorter['sorter_name']}_params{i}")
+
+        if clustering_method == "consensus":
+            import spikeinterface.comparison as sc
+            from spikeinterface.curation import remove_duplicated_spikes
+
+            min_agreement = params["SI_CONSENSUS_PARAMS"].get('min_agree', len(sorter_objects))
+            print(f'Running SI consensus requiring agreement from {min_agreement}/{len(sorter_objects)} sorters')
+
+            consensus = sc.compare_multiple_sorters(sorting_list=sorter_objects,
+                                                    name_list=sorter_names,
+                                                    verbose=False,
+                                                    delta_time=.2,
+                                                    match_score=.3,
+                                                    spiketrain_mode='union')
+            agreement = consensus.get_agreement_sorting(minimum_agreement_count=2)
+            agreement = remove_duplicated_spikes(agreement)
+
+            consensus_folder = output_dir / clustering_method / 'spike_sorting' / "si_sorting.pkl"
+            agreement.dump_to_pickle(consensus_folder, relative_to=output_dir)
+
 
         self.insert1(
             {
