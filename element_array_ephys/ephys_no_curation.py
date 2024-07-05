@@ -1093,7 +1093,9 @@ class CuratedClustering(dj.Imported):
             }
 
             spike_locations = sorting_analyzer.get_extension("spike_locations")
-            spikes_df = pd.DataFrame(spike_locations.spikes)
+            extremum_channel_inds = si.template_tools.get_template_extremum_channel(sorting_analyzer, outputs="index")
+            spikes_df = pd.DataFrame(
+                sorting_analyzer.sorting.to_spike_vector(extremum_channel_inds=extremum_channel_inds))
 
             ephys_sync_func = get_sync_ephys_function(key)
 
