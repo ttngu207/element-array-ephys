@@ -618,6 +618,7 @@ class LFP(dj.Imported):
                 electrode_keys.append(probe_electrodes[(shank, shank_col, shank_row)])
         elif acq_software == "Trellis":
             import spikeinterface as si
+            from spikeinterface import extractors
 
             si_extractor: si.extractors.neoextractors = (
                 si.extractors.extractorlist.recording_extractor_full_dict["blackrock"]
