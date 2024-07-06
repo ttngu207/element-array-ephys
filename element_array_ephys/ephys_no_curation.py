@@ -620,9 +620,7 @@ class LFP(dj.Imported):
             import spikeinterface as si
             from spikeinterface import extractors
 
-            si_extractor: si.extractors.neoextractors = (
-                si.extractors.extractorlist.recording_extractor_full_dict["blackrock"]
-            )
+            si_extractor = si.extractors.neoextractors.blackrock.BlackrockRecordingExtractor
 
             nsx2_relpaths = (EphysRecording.EphysFile & key).fetch("file_path")
             nsx2_fullpaths = [
