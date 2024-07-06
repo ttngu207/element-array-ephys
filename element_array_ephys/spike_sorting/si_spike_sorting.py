@@ -124,9 +124,7 @@ class PreProcessing(dj.Imported):
             spikeglx_recording.validate_file("ap")
             data_dir = spikeglx_meta_filepath.parent
 
-            si_extractor: si.extractors.neoextractors = (
-                si.extractors.extractorlist.recording_extractor_full_dict["spikeglx"]
-            )
+            si_extractor = si.extractors.neoextractors.spikeglx.SpikeGLXRecordingExtractor
             stream_names, stream_ids = si.extractors.get_neo_streams(
                 acq_software, folder_path=data_dir
             )
@@ -137,9 +135,8 @@ class PreProcessing(dj.Imported):
             oe_probe = ephys.get_openephys_probe_data(key)
             assert len(oe_probe.recording_info["recording_files"]) == 1
             data_dir = oe_probe.recording_info["recording_files"][0]
-            si_extractor: si.extractors.neoextractors = (
-                si.extractors.extractorlist.recording_extractor_full_dict["openephys"]
-            )
+            si_extractor = si.extractors.neoextractors.openephys.OpenEphysBinaryRecordingExtractor
+
             stream_names, stream_ids = si.extractors.get_neo_streams(
                 acq_software, folder_path=data_dir
             )
@@ -147,9 +144,7 @@ class PreProcessing(dj.Imported):
                 folder_path=data_dir, stream_name=stream_names[0]
             )
         elif acq_software == "Trellis":
-            si_extractor: si.extractors.neoextractors = (
-                si.extractors.extractorlist.recording_extractor_full_dict["blackrock"]
-            )
+            si_extractor = si.extractors.neoextractors.blackrock.BlackrockRecordingExtractor
 
             nsx5_relpaths = (ephys.EphysRecording.EphysFile & key).fetch("file_path")
             nsx5_fullpaths = [
