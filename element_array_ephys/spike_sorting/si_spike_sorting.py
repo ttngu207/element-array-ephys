@@ -9,7 +9,7 @@ import pandas as pd
 import spikeinterface as si
 from element_array_ephys import probe, readers
 from element_interface.utils import find_full_path, memoized_result
-from spikeinterface import exporters, postprocessing, qualitymetrics, sorters
+from spikeinterface import exporters, extractors, sorters
 
 from . import si_preprocessing
 
@@ -21,11 +21,11 @@ ephys = None
 
 
 def activate(
-        schema_name,
-        *,
-        ephys_module,
-        create_schema=True,
-        create_tables=True,
+    schema_name,
+    *,
+    ephys_module,
+    create_schema=True,
+    create_tables=True,
 ):
     """
     activate(schema_name, *, create_schema=True, create_tables=True, activated_ephys=None)
@@ -62,9 +62,9 @@ class PreProcessing(dj.Imported):
     @property
     def key_source(self):
         return (
-                ephys.ClusteringTask * ephys.ClusteringParamSet
-                & {"task_mode": "trigger"}
-                & f"clustering_method in {tuple(SI_SORTERS)}"
+            ephys.ClusteringTask * ephys.ClusteringParamSet
+            & {"task_mode": "trigger"}
+            & f"clustering_method in {tuple(SI_SORTERS)}"
         ) - ephys.Clustering
 
     def make(self, key):
@@ -73,16 +73,16 @@ class PreProcessing(dj.Imported):
 
         # Set the output directory
         clustering_method, acq_software, output_dir, params = (
-                ephys.ClusteringTask * ephys.EphysRecording * ephys.ClusteringParamSet & key
+            ephys.ClusteringTask * ephys.EphysRecording * ephys.ClusteringParamSet & key
         ).fetch1("clustering_method", "acq_software", "clustering_output_dir", "params")
 
         # Get sorter method and create output directory.
         sorter_name = clustering_method.replace(".", "_")
 
         for required_key in (
-                "SI_PREPROCESSING_METHOD",
-                "SI_SORTING_PARAMS",
-                "SI_POSTPROCESSING_PARAMS",
+            "SI_PREPROCESSING_METHOD",
+            "SI_SORTING_PARAMS",
+            "SI_POSTPROCESSING_PARAMS",
         ):
             if required_key not in params:
                 raise ValueError(
@@ -111,33 +111,38 @@ class PreProcessing(dj.Imported):
             )
             spikeglx_recording.validate_file("ap")
             data_dir = spikeglx_meta_filepath.parent
+
+            si_extractor = si.extractors.neoextractors.spikeglx.SpikeGLXRecordingExtractor
+            stream_names, stream_ids = si.extractors.get_neo_streams(
+                acq_software, folder_path=data_dir
+            )
+            si_recording: si.BaseRecording = si_extractor(
+                folder_path=data_dir, stream_name=stream_names[0]
+            )
         elif acq_software == "Open Ephys":
             oe_probe = ephys.get_openephys_probe_data(key)
             assert len(oe_probe.recording_info["recording_files"]) == 1
             data_dir = oe_probe.recording_info["recording_files"][0]
+            si_extractor = si.extractors.neoextractors.openephys.OpenEphysBinaryRecordingExtractor
+
+            stream_names, stream_ids = si.extractors.get_neo_streams(
+                acq_software, folder_path=data_dir
+            )
+            si_recording: si.BaseRecording = si_extractor(
+                folder_path=data_dir, stream_name=stream_names[0]
+            )
         else:
             raise NotImplementedError(
                 f"SpikeInterface processing for {acq_software} not yet implemented."
             )
-        acq_software = acq_software.replace(" ", "").lower()
-        si_extractor: si.extractors.neoextractors = (
-            si.extractors.extractorlist.recording_extractor_full_dict[acq_software]
-        )  # data extractor object
-
-        stream_names, stream_ids = si.extractors.get_neo_streams(
-            acq_software, folder_path=data_dir
-        )
-        si_recording: si.BaseRecording = si_extractor(
-            folder_path=data_dir, stream_name=stream_names[0]
-        )
 
         # Add probe information to recording object
         electrodes_df = (
             (
-                    ephys.EphysRecording.Channel
-                    * probe.ElectrodeConfig.Electrode
-                    * probe.ProbeType.Electrode
-                    & key
+                ephys.EphysRecording.Channel
+                * probe.ElectrodeConfig.Electrode
+                * probe.ProbeType.Electrode
+                & key
             )
             .fetch(format="frame")
             .reset_index()
@@ -159,7 +164,10 @@ class PreProcessing(dj.Imported):
             {
                 **key,
                 "execution_time": execution_time,
-                "execution_duration": (datetime.utcnow() - execution_time).total_seconds() / 3600,
+                "execution_duration": (
+                    datetime.utcnow() - execution_time
+                ).total_seconds()
+                / 3600,
             }
         )
 
@@ -180,7 +188,7 @@ class SIClustering(dj.Imported):
 
         # Load recording object.
         clustering_method, output_dir, params = (
-                ephys.ClusteringTask * ephys.ClusteringParamSet & key
+            ephys.ClusteringTask * ephys.ClusteringParamSet & key
         ).fetch1("clustering_method", "clustering_output_dir", "params")
         output_dir = find_full_path(ephys.get_ephys_root_data_dir(), output_dir)
         clustering_method = clustering_method.replace(".", "_")
@@ -267,7 +275,10 @@ class SIClustering(dj.Imported):
             {
                 **key,
                 "execution_time": execution_time,
-                "execution_duration": (datetime.utcnow() - execution_time).total_seconds() / 3600,
+                "execution_duration": (
+                    datetime.utcnow() - execution_time
+                ).total_seconds()
+                / 3600,
             }
         )
 
@@ -281,6 +292,7 @@ class PostProcessing(dj.Imported):
     ---
     execution_time: datetime   # datetime of the start of this step
     execution_duration: float  # execution duration in hours
+    do_si_export=0: bool       # whether to export to phy
     """
 
     def make(self, key):
@@ -288,7 +300,7 @@ class PostProcessing(dj.Imported):
 
         # Load recording & sorting object.
         clustering_method, output_dir, params = (
-                ephys.ClusteringTask * ephys.ClusteringParamSet & key
+            ephys.ClusteringTask * ephys.ClusteringParamSet & key
         ).fetch1("clustering_method", "clustering_output_dir", "params")
         output_dir = find_full_path(ephys.get_ephys_root_data_dir(), output_dir)
         sorter_name = clustering_method.replace(".", "_")
@@ -337,33 +349,97 @@ class PostProcessing(dj.Imported):
 
             sorting_analyzer.compute(extensions_to_compute, **job_kwargs)
 
-            # Save to phy format
-            if postprocessing_params.get("export_to_phy", False):
-                si.exporters.export_to_phy(
-                    sorting_analyzer=sorting_analyzer,
-                    output_folder=analyzer_output_dir / "phy",
-                    use_relative_path=True,
-                    **job_kwargs,
-                )
-            # Generate spike interface report
-            if postprocessing_params.get("export_report", True):
-                si.exporters.export_report(
-                    sorting_analyzer=sorting_analyzer,
-                    output_folder=analyzer_output_dir / "spikeinterface_report",
-                    **job_kwargs,
-                )
-
         _sorting_analyzer_compute()
 
         self.insert1(
             {
                 **key,
                 "execution_time": execution_time,
-                "execution_duration": (datetime.utcnow() - execution_time).total_seconds() / 3600,
+                "execution_duration": (
+                    datetime.utcnow() - execution_time
+                ).total_seconds()
+                / 3600,
+                "do_si_export": postprocessing_params.get("export_to_phy", False)
+                or postprocessing_params.get("export_report", False),
             }
         )
 
         # Once finished, insert this `key` into ephys.Clustering
         ephys.Clustering.insert1(
             {**key, "clustering_time": datetime.utcnow()}, allow_direct_insert=True
+        )
+
+
+@schema
+class SIExport(dj.Computed):
+    """A SpikeInterface export report and to Phy"""
+
+    definition = """
+    -> PostProcessing
+    ---
+    execution_time: datetime
+    execution_duration: float
+    """
+
+    @property
+    def key_source(self):
+        return PostProcessing & "do_si_export = 1"
+
+    def make(self, key):
+        execution_time = datetime.utcnow()
+
+        clustering_method, output_dir, params = (
+            ephys.ClusteringTask * ephys.ClusteringParamSet & key
+        ).fetch1("clustering_method", "clustering_output_dir", "params")
+        output_dir = find_full_path(ephys.get_ephys_root_data_dir(), output_dir)
+        sorter_name = clustering_method.replace(".", "_")
+
+        postprocessing_params = params["SI_POSTPROCESSING_PARAMS"]
+
+        job_kwargs = postprocessing_params.get(
+            "job_kwargs", {"n_jobs": -1, "chunk_duration": "1s"}
+        )
+
+        analyzer_output_dir = output_dir / sorter_name / "sorting_analyzer"
+        sorting_analyzer = si.load_sorting_analyzer(folder=analyzer_output_dir)
+
+        @memoized_result(
+            uniqueness_dict=postprocessing_params,
+            output_directory=analyzer_output_dir / "phy",
+        )
+        def _export_to_phy():
+            # Save to phy format
+            si.exporters.export_to_phy(
+                sorting_analyzer=sorting_analyzer,
+                output_folder=analyzer_output_dir / "phy",
+                use_relative_path=True,
+                **job_kwargs,
+            )
+
+        @memoized_result(
+            uniqueness_dict=postprocessing_params,
+            output_directory=analyzer_output_dir / "spikeinterface_report",
+        )
+        def _export_report():
+            # Generate spike interface report
+            si.exporters.export_report(
+                sorting_analyzer=sorting_analyzer,
+                output_folder=analyzer_output_dir / "spikeinterface_report",
+                **job_kwargs,
+            )
+
+        if postprocessing_params.get("export_report", False):
+            _export_report()
+        if postprocessing_params.get("export_to_phy", False):
+            _export_to_phy()
+
+        self.insert1(
+            {
+                **key,
+                "execution_time": execution_time,
+                "execution_duration": (
+                    datetime.utcnow() - execution_time
+                ).total_seconds()
+                / 3600,
+            }
         )
