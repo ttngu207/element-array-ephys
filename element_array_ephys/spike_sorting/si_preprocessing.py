@@ -10,6 +10,17 @@ def CatGT(recording):
     return recording
 
 
+def shuler(recording):
+    recording = si.preprocessing.bandpass_filter(recording, freq_min=300, freq_max=6000)
+    bad_channel_ids, channel_labels = si.preprocessing.detect_bad_channels(recording)
+    recording = si.preprocessing.interpolate_bad_channels(recording, bad_channel_ids)
+    recording = si.preprocessing.phase_shift(recording)
+    recording = si.preprocessing.common_reference(
+        recording, operator="median", reference="global"
+    )
+    return recording
+
+
 def IBLdestriping(recording):
     # From International Brain Laboratory. “Spike sorting pipeline for the International Brain Laboratory”. 4 May 2022. 9 Jun 2022.
     recording = si.preprocessing.highpass_filter(recording, freq_min=400.0)
