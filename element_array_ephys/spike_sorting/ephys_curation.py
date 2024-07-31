@@ -74,7 +74,7 @@ class ManualCuration(dj.Manual):
         file_id: int
         ---
         file_name: varchar(1000)
-        file: filepath@ephys-store
+        file: filepath@ephys-processed
         """
 
     @classmethod

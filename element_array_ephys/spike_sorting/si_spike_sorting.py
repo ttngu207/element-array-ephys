@@ -323,7 +323,7 @@ class PostProcessing(dj.Imported):
         file_id: int
         ---
         file_name: varchar(1000)
-        file: filepath@ephys-store
+        file: filepath@ephys-processed
         """
 
     def make(self, key):
@@ -427,7 +427,7 @@ class SIExport(dj.Computed):
         file_id: int
         ---
         file_name: varchar(1000)
-        file: filepath@ephys-store
+        file: filepath@ephys-processed
         """
 
     @property
