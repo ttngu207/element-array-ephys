@@ -114,7 +114,7 @@ class PreProcessing(dj.Imported):
 
             si_extractor = si.extractors.neoextractors.spikeglx.SpikeGLXRecordingExtractor
             stream_names, stream_ids = si.extractors.get_neo_streams(
-                acq_software.lower(), folder_path=data_dir
+                "spikeglx", folder_path=data_dir
             )
             si_recording: si.BaseRecording = si_extractor(
                 folder_path=data_dir, stream_name=stream_names[0]
@@ -126,7 +126,7 @@ class PreProcessing(dj.Imported):
             si_extractor = si.extractors.neoextractors.openephys.OpenEphysBinaryRecordingExtractor
 
             stream_names, stream_ids = si.extractors.get_neo_streams(
-                acq_software.lower().replace(' ', ''), folder_path=data_dir
+                "openephysbinary", folder_path=data_dir
             )
             si_recording: si.BaseRecording = si_extractor(
                 folder_path=data_dir, stream_name=stream_names[0]
@@ -270,6 +270,7 @@ class SIClustering(dj.Imported):
 
             consensus_folder = output_dir / clustering_method / 'spike_sorting' / "si_sorting.pkl"
             agreement.dump_to_pickle(consensus_folder, relative_to=output_dir)
+
 
         self.insert1(
             {
