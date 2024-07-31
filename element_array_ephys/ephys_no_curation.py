@@ -1057,10 +1057,10 @@ class CuratedClustering(dj.Imported):
             # {unit: spike_count}
 
             # update channel2electrode_map to match with probe's channel index
-            channel2electrode_map = {
-                idx: channel2electrode_map[int(chn_idx)]
-                for idx, chn_idx in enumerate(sorting_analyzer.get_probe().contact_ids)
-            }
+            # channel2electrode_map = {
+            #     idx: channel2electrode_map[int(chn_idx)]
+            #     for idx, chn_idx in enumerate(sorting_analyzer.get_probe().contact_ids)
+            # }
 
             # Get unit id to quality label mapping
             cluster_quality_label_map = {
@@ -1261,11 +1261,11 @@ class WaveformSet(dj.Imported):
             )  # {unit: peak_channel_index}
             unit_peak_channel = {u: chn[0] for u, chn in unit_peak_channel.items()}
 
-            # update channel2electrode_map to match with probe's channel index
-            channel2electrode_map = {
-                idx: channel2electrode_map[int(chn_idx)]
-                for idx, chn_idx in enumerate(sorting_analyzer.get_probe().contact_ids)
-            }
+            # # update channel2electrode_map to match with probe's channel index
+            # channel2electrode_map = {
+            #     idx: channel2electrode_map[int(chn_idx)]
+            #     for idx, chn_idx in enumerate(sorting_analyzer.get_probe().contact_ids)
+            # }
 
             templates = sorting_analyzer.get_extension("templates")
 
