@@ -320,9 +320,8 @@ class PostProcessing(dj.Imported):
     class File(dj.Part):
         definition = """
         -> master
-        file_id: int
+        file_name: varchar(255)
         ---
-        file_name: varchar(1000)
         file: filepath@ephys-processed
         """
 
@@ -398,8 +397,8 @@ class PostProcessing(dj.Imported):
         # Insert result files
         self.File.insert(
             [
-                {**key, "file_id": i, "file_name": f.relative_to(analyzer_output_dir).name, "file": f}
-                for i, f in enumerate(analyzer_output_dir.rglob("*"))
+                {**key, "file_name": f.relative_to(analyzer_output_dir).as_posix(), "file": f}
+                for f in analyzer_output_dir.rglob("*")
                 if f.is_file()
             ]
         )
@@ -424,9 +423,8 @@ class SIExport(dj.Computed):
     class File(dj.Part):
         definition = """
         -> master
-        file_id: int
+        file_name: varchar(255)
         ---
-        file_name: varchar(1000)
         file: filepath@ephys-processed
         """
 
@@ -497,10 +495,8 @@ class SIExport(dj.Computed):
         for report_dirname in ("spikeinterface_report", "phy"):
             self.File.insert(
                 [
-                    {**key, "file_id": i, "file_name": f.relative_to(analyzer_output_dir).name, "file": f}
-                    for i, f in enumerate(
-                        (analyzer_output_dir / report_dirname).rglob("*")
-                    )
+                    {**key, "file_name": f.relative_to(analyzer_output_dir).as_posix(), "file": f}
+                    for f in (analyzer_output_dir / report_dirname).rglob("*")
                     if f.is_file()
                 ]
             )
