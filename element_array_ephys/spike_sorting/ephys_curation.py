@@ -192,6 +192,24 @@ class ManualCuration(dj.Manual):
         description="",
         delete_local_dir=True,
     ):
+        """
+        Insert a new manual curation into the database
+        1. Get a new "curation_id" (auto-incremented)
+        2. Copy the curation_output_dir to a new directory with the new curation_id
+        3. Insert the new curation into the database (excluding the raw recording.dat file)
+        4. Delete the old curation directory
+        5. Optionally delete the new curation directory
+        Args:
+            curation_output_dir: directory where the curation results are stored
+            key: ephys.Clustering key
+            parent_curation_id: curation_id of the parent curation
+            curation_method: method/package used for manual curation (e.g. Phy)
+            description: user-defined description/note of the curation
+            delete_local_dir: if True, delete the new curation directory after inserting the curation into the database
+
+        Returns: `key` of the newly inserted manual curation
+        """
+
         curation_output_dir = Path(curation_output_dir)
 
         # Light logic to safeguard against re-inserting the same curation
