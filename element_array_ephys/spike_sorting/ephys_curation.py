@@ -60,7 +60,7 @@ class ManualCuration(dj.Manual):
     definition = """
     # Manual curation from an ephys.Clustering
     -> ephys.Clustering
-    curation_id=0: int
+    curation_id: int
     ---
     curation_datetime: datetime    # UTC time when the curation was performed
     parent_curation_id=-1: int     # if -1, this curation is based on the raw spike sorting results
@@ -78,7 +78,13 @@ class ManualCuration(dj.Manual):
 
     @classmethod
     def prepare_manual_curation(
-        cls, key, *, parent_curation_id=-1, curation_method="Phy", if_exists="skip", download_raw=False
+        cls,
+        key,
+        *,
+        parent_curation_id=-1,
+        curation_method="Phy",
+        if_exists="skip",
+        download_binary=False,
     ):
         """
         Create a new directory to for a new round of manual curation
@@ -89,7 +95,7 @@ class ManualCuration(dj.Manual):
             parent_curation_id (int): curation_id to be used as the starting point for this new curation
             curation_method (str): method/package used for manual curation (e.g. Phy)
             if_exists (str): overwrite|skip
-            download_raw (bool): if True, also download the raw ephys (.dat) file
+            download_binary (bool): if True, also download the raw ephys (.dat) file
 
         Returns:
             directory where the spike sorting results are downloaded
@@ -125,7 +131,9 @@ class ManualCuration(dj.Manual):
 
         # create new directory for new curation
         output_dir = (ephys.ClusteringTask & key).fetch1("clustering_output_dir")
-        output_dir = Path(ephys.get_processed_root_data_dir()) / output_dir / "curations"
+        output_dir = (
+            Path(ephys.get_processed_root_data_dir()) / output_dir / "curations"
+        )
 
         dirname = f"{curation_method}_parentID_" + (
             "orig" if parent_curation_id == -1 else f"{parent_curation_id}"
@@ -133,72 +141,82 @@ class ManualCuration(dj.Manual):
         curation_output_dir = output_dir / dirname
         curation_output_dir.mkdir(parents=True, exist_ok=True)
 
-        # check for existing curation directory
-        if (curation_output_dir / ".curation_meta.json").exists():
-            with open(curation_output_dir / ".curation_meta.json", "r") as f:
-                meta = json.load(f)
-            status = meta["status"]
-            logger.info(
-                f"Existing curation directory found: {curation_output_dir} - status: {status}"
-            )
-        else:
-            # download spike sorting files and copy to the new directory
-            logger.info(
-                f"New manual curation: {curation_output_dir} - Downloading {len(files_query)} files..."
-            )
+        # download spike sorting files and copy to the new directory
+        logger.info(
+            f"New manual curation: {curation_output_dir} - Downloading {len(files_query)} files..."
+        )
 
-            for f in files_query.fetch("file"):
-                f = Path(f)
-                if f.name.startswith(".") and f.suffix in (".json", ".pickle"):
-                    continue
-                new_f = curation_output_dir / f.name
-                if not new_f.exists() or if_exists == "overwrite":
-                    shutil.copy2(f, new_f)
+        for f in files_query.fetch("file"):
+            f = Path(f)
+            if f.name.startswith(".") and f.suffix in (".json", ".pickle"):
+                continue
+            new_f = curation_output_dir / f.name
+            if not new_f.exists() or if_exists == "overwrite":
+                shutil.copy2(f, new_f)
 
-            # write a json file with the initial meta information
-            with open(curation_output_dir / ".curation_meta.json", "w") as f:
-                json.dump(
-                    {
-                        "parent_table": (
-                            cls.full_table_name
-                            if parent_curation_id != -1
-                            else ephys_sorter.SIExport.full_table_name
-                        ),
-                        "key": key,
-                        "parent_curation_id": parent_curation_id,
-                        "curation_method": curation_method,
-                        "init_datetime": init_datetime.strftime("%Y%m%d_%H%M%S"),
-                        "status": "initialized",
-                    },
-                    f,
-                    default=str,
-                )
-
-        if download_raw:
+        if download_binary:
             new_f = curation_output_dir / "recording.dat"
             if not new_f.exists() or if_exists == "overwrite":
-                logger.info("Downloading raw ephys data file...")
-                f = Path(
-                    (
-                        ephys_sorter.SIExport.File
-                        & key
-                        & "file_name = 'phy/recording.dat'"
-                    ).fetch1("file")
+                raw_file_query = (
+                    ephys_sorter.SIExport.File & key & "file_name = 'phy/recording.dat'"
                 )
-                shutil.copy2(f, new_f)
+                if raw_file_query:
+                    logger.info("Downloading raw ephys data file...")
+                    f = Path(raw_file_query.fetch1("file"))
+                    shutil.copy2(f, new_f)
+                else:
+                    logger.warning("Raw ephys data file not found.")
+
+        # write "entry" into a json file
+        with open(curation_output_dir / ".manual_curation_entry.json", "w") as f:
+            json.dump(
+                {
+                    **key,
+                    "parent_curation_id": parent_curation_id,
+                    "curation_method": curation_method,
+                },
+                f,
+                default=str,
+            )
 
         return curation_output_dir
 
     @classmethod
-    def _insert_curation(
+    def insert_manual_curation(
         cls,
-        key,
-        *,
         curation_output_dir,
-        parent_curation_id=-1,
+        *,
+        key=None,
+        parent_curation_id=None,
         curation_method="Phy",
         description="",
+        delete_local_dir=True,
     ):
+        curation_output_dir = Path(curation_output_dir)
+
+        # Light logic to safeguard against re-inserting the same curation
+        if (curation_output_dir / ".manual_curation_entry.json").exists():
+            if key is not None:
+                logger.warning(".manual_curation_entry.json already exists. Ignoring inputs.")
+
+            with open(curation_output_dir / ".manual_curation_entry.json", "r") as f:
+                key = json.load(f)
+
+            parent_curation_id = key.pop("parent_curation_id")
+            curation_method = key.pop("curation_method")
+
+            if "curation_id" in key:
+                print(f"Manual curation already inserted: {key}")
+                if (
+                    dj.utils.user_choice("Insert a new manual curation anyway?")
+                    != "yes"
+                ):
+                    print("Canceled")
+                    return
+        else:
+            if parent_curation_id is None or key is None:
+                raise ValueError(".manual_curation_entry.json not found. `key` AND `parent_curation_id` must be specified")
+
         if curation_method != "Phy":
             raise ValueError(f"Unsupported curation method: {curation_method}")
 
@@ -218,30 +236,32 @@ class ManualCuration(dj.Manual):
 
         key["curation_id"] = curation_id
         with cls.connection.transaction:
-            cls.insert1(
-                {
-                    **key,
-                    "curation_datetime": curate_datetime,
-                    "parent_curation_id": parent_curation_id,
-                    "curation_method": curation_method,
-                    "description": description,
-                }
-            )
+            entry = {
+                **key,
+                "curation_datetime": curate_datetime,
+                "parent_curation_id": parent_curation_id,
+                "curation_method": curation_method,
+                "description": description,
+            }
+            cls.insert1(entry)
 
             # rename curation_output_dir folder into curation_id (skip the raw recording.dat file)
             new_curation_output_dir = (
-                curation_output_dir.parent / f"{curation_method}_curationID_{curation_id}"
+                curation_output_dir.parent
+                / f"{curation_method}_curationID_{curation_id}"
             )
             new_curation_output_dir.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Inserting files from {new_curation_output_dir}...")
             for f in curation_output_dir.glob("*"):
                 if f.is_file() and f.name != "recording.dat":
-                    shutil.copy2(f, new_curation_output_dir / f.relative_to(curation_output_dir))
+                    shutil.copy2(
+                        f, new_curation_output_dir / f.relative_to(curation_output_dir)
+                    )
                 elif f.is_dir():
                     shutil.copytree(
                         f, new_curation_output_dir / f.relative_to(curation_output_dir)
                     )
 
+            logger.info(f"Inserting files from {new_curation_output_dir}...")
             cls.File.insert(
                 [
                     {
@@ -250,62 +270,32 @@ class ManualCuration(dj.Manual):
                         "file": f,
                     }
                     for f in new_curation_output_dir.rglob("*")
-                    if f.is_file() and f.name != "recording.dat"
+                    if f.is_file() and f.name not in ("recording.dat", ".manual_curation_entry.json")
                 ]
             )
 
-        logger.info(f"New manual curation inserted: {key}")
+        logger.info(f"New manual curation successfully inserted: {key}")
+
+        # write "entry" into a json file
+        with open(new_curation_output_dir / ".manual_curation_entry.json", "w") as f:
+            json.dump(entry, f, default=str)
+
+        # Delete the old curation directory
+        try:
+            shutil.rmtree(curation_output_dir)
+        except Exception as e:
+            logger.error(f"Failed to fully delete the old curation directory (please try to delete manually):\n\t{curation_output_dir}\n{e}")
+
+        if delete_local_dir:
+            try:
+                shutil.rmtree(new_curation_output_dir)
+            except Exception as e:
+                logger.error(f"Failed to fully delete the new curation directory (please try to delete manually):\n\t{new_curation_output_dir}\n{e}")
 
         return key
 
 
-def commit_new_curation(curation_output_dir, description="", do_insert=True):
-    if not curation_output_dir.is_dir():
-        raise FileNotFoundError(f"Invalid curation directory: {curation_output_dir}")
-
-    with open(curation_output_dir / ".curation_meta.json", "r") as f:
-        meta = json.load(f)
-
-    if meta["status"] == "inserted":
-        logger.info(f"Curation already inserted: {meta}")
-        return meta
-
-    meta.update(
-        {
-            "status": "committed",
-            "description": description,
-            "commit_datetime": datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
-        }
-    )
-    with open(curation_output_dir / ".curation_meta.json", "w") as f:
-        json.dump(meta, f)
-
-    if do_insert:
-        assert (
-            meta["status"] == "committed"
-        ), "Must commit before insert to the database"
-        key = ManualCuration._insert_curation(
-            key=meta["key"],
-            curation_output_dir=curation_output_dir,
-            parent_curation_id=meta["parent_curation_id"],
-            curation_method=meta["curation_method"],
-            description=meta["description"],
-        )
-
-        meta.update(
-            {
-                **key,
-                "status": "inserted",
-                "insert_datetime": datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
-            }
-        )
-        with open(curation_output_dir / ".curation_meta.json", "w") as f:
-            json.dump(meta, f)
-
-    return meta
-
-
-def launch_phy(key, parent_curation_id=-1, download_raw=False, do_insert=True):
+def launch_phy(key, parent_curation_id=-1, download_binary=False):
     """
     Select a spike sorting key for manual curation
     1. download the spike sorting results
@@ -321,17 +311,14 @@ def launch_phy(key, parent_curation_id=-1, download_raw=False, do_insert=True):
     from phy.apps.template import template_gui
 
     curation_output_dir = ManualCuration.prepare_manual_curation(
-        key, parent_curation_id=parent_curation_id, download_raw=download_raw
+        key, parent_curation_id=parent_curation_id, download_binary=download_binary
     )
 
     template_gui(curation_output_dir / "params.py")
 
-    if dj.utils.user_choice("Commit new manual curation?") != "yes":
-        print("Canceled")
-        return
-
     description = input("Curation description: ")
 
-    commit_new_curation(
-        curation_output_dir, description=description, do_insert=do_insert
+    ManualCuration.insert_manual_curation(
+        curation_output_dir,
+        description=description,
     )
