@@ -118,7 +118,7 @@ class PreProcessing(dj.Imported):
                 si.extractors.neoextractors.spikeglx.SpikeGLXRecordingExtractor
             )
             stream_names, stream_ids = si.extractors.get_neo_streams(
-                acq_software, folder_path=data_dir
+                "spikeglx", folder_path=data_dir
             )
             si_recording: si.BaseRecording = si_extractor(
                 folder_path=data_dir, stream_name=stream_names[0]
@@ -132,7 +132,7 @@ class PreProcessing(dj.Imported):
             )
 
             stream_names, stream_ids = si.extractors.get_neo_streams(
-                acq_software, folder_path=data_dir
+                "openephysbinary", folder_path=data_dir
             )
             si_recording: si.BaseRecording = si_extractor(
                 folder_path=data_dir, stream_name=stream_names[0]
@@ -209,20 +209,14 @@ class SIClustering(dj.Imported):
         sorters_to_run = []
 
         if clustering_method == "consensus":
-            assert isinstance(
-                sorting_params, list
-            ), "Consensus method requires a list of each sorter's parameters"
-            for param_set in sorting_params:
-                sorters_to_run.append(
-                    {
-                        "sorter_name": param_set["sorter_name"].replace(".", "_"),
-                        "sorting_output_dir": output_dir
-                        / clustering_method
-                        / param_set["sorter_name"]
-                        / "spike_sorting",
-                        "sorter_params": param_set["sorter_params"],
-                    }
-                )
+            assert isinstance(sorting_params, list), "Consensus method requires a list of each sorter's parameters"
+            for i, param_set in enumerate(sorting_params):
+                sorters_to_run.append({
+                    'sorter_name': param_set['sorter_name'].replace(".", "_"),
+                    'sorting_output_dir': output_dir / clustering_method /
+                                          f'{param_set["sorter_name"].replace(".", "_")}_params{i}' / "spike_sorting",
+                    'sorter_params': param_set['sorter_params'],
+                })
         else:
             assert isinstance(
                 sorting_params, dict
@@ -287,6 +281,13 @@ class SIClustering(dj.Imported):
             )
             agreement = consensus.get_agreement_sorting(minimum_agreement_count=2)
             agreement = remove_duplicated_spikes(agreement)
+            unit_labels = []
+            for si_id, sorter_ids in zip(agreement.unit_ids, agreement.get_property('unit_ids')):
+                sorter_labels = [sorter_objects[i].get_unit_property(sorter_ids[sorter_name], "KSLabel")
+                                    for i, sorter_name in enumerate(sorter_names)]
+                label = 'mua' if 'mua' in sorter_labels else 'good'
+                unit_labels.append(label)
+            agreement.set_property("KSLabel", unit_labels)
 
             consensus_folder = (
                 output_dir / clustering_method / "spike_sorting" / "si_sorting.pkl"
