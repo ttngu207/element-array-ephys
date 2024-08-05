@@ -45,7 +45,9 @@ def activate(
     ephys.Clustering.key_source -= PreProcessing.key_source.proj()
 
 
-SI_SORTERS = [s.replace("_", ".") for s in si.sorters.sorter_dict.keys()] + ['consensus']
+SI_SORTERS = [s.replace("_", ".") for s in si.sorters.sorter_dict.keys()] + [
+    "consensus"
+]
 
 
 @schema
@@ -112,7 +114,9 @@ class PreProcessing(dj.Imported):
             spikeglx_recording.validate_file("ap")
             data_dir = spikeglx_meta_filepath.parent
 
-            si_extractor = si.extractors.neoextractors.spikeglx.SpikeGLXRecordingExtractor
+            si_extractor = (
+                si.extractors.neoextractors.spikeglx.SpikeGLXRecordingExtractor
+            )
             stream_names, stream_ids = si.extractors.get_neo_streams(
                 "spikeglx", folder_path=data_dir
             )
@@ -123,7 +127,9 @@ class PreProcessing(dj.Imported):
             oe_probe = ephys.get_openephys_probe_data(key)
             assert len(oe_probe.recording_info["recording_files"]) == 1
             data_dir = oe_probe.recording_info["recording_files"][0]
-            si_extractor = si.extractors.neoextractors.openephys.OpenEphysBinaryRecordingExtractor
+            si_extractor = (
+                si.extractors.neoextractors.openephys.OpenEphysBinaryRecordingExtractor
+            )
 
             stream_names, stream_ids = si.extractors.get_neo_streams(
                 "openephysbinary", folder_path=data_dir
@@ -192,7 +198,9 @@ class SIClustering(dj.Imported):
         ).fetch1("clustering_method", "clustering_output_dir", "params")
         output_dir = find_full_path(ephys.get_ephys_root_data_dir(), output_dir)
         clustering_method = clustering_method.replace(".", "_")
-        recording_file = output_dir / clustering_method / "recording" / "si_recording.pkl"
+        recording_file = (
+            output_dir / clustering_method / "recording" / "si_recording.pkl"
+        )
         si_recording: si.BaseRecording = si.load_extractor(
             recording_file, base_folder=output_dir
         )
@@ -210,35 +218,42 @@ class SIClustering(dj.Imported):
                     'sorter_params': param_set['sorter_params'],
                 })
         else:
-            assert isinstance(sorting_params, dict), "Single sorter methods requires a dict of sorting parameters"
-            sorters_to_run = [{
-                'sorter_name': clustering_method,
-                'sorting_output_dir': output_dir / clustering_method / "spike_sorting",
-                'sorter_params': sorting_params,
-            }]
+            assert isinstance(
+                sorting_params, dict
+            ), "Single sorter methods requires a dict of sorting parameters"
+            sorters_to_run = [
+                {
+                    "sorter_name": clustering_method,
+                    "sorting_output_dir": output_dir
+                    / clustering_method
+                    / "spike_sorting",
+                    "sorter_params": sorting_params,
+                }
+            ]
 
         sorter_objects = []
         sorter_names = []
         for i, sorter in enumerate(sorters_to_run):
             # Run sorting
             @memoized_result(
-                uniqueness_dict=sorter['sorter_params'],
-                output_directory=sorter['sorting_output_dir'],
+                uniqueness_dict=sorter["sorter_params"],
+                output_directory=sorter["sorting_output_dir"],
             )
             def _run_sorter():
                 # Sorting performed in a dedicated docker environment if the sorter is not built in the spikeinterface package.
                 si_sorting: si.sorters.BaseSorter = si.sorters.run_sorter(
-                    sorter_name=sorter['sorter_name'],
+                    sorter_name=sorter["sorter_name"],
                     recording=si_recording,
-                    folder=sorter['sorting_output_dir'],
+                    folder=sorter["sorting_output_dir"],
                     remove_existing_folder=True,
                     verbose=True,
-                    docker_image=sorter['sorter_name'] not in si.sorters.installed_sorters(),
-                    **sorter['sorter_params'],
+                    docker_image=sorter["sorter_name"]
+                    not in si.sorters.installed_sorters(),
+                    **sorter["sorter_params"],
                 )
 
                 # Save sorting object
-                sorting_save_path = sorter['sorting_output_dir'] / "si_sorting.pkl"
+                sorting_save_path = sorter["sorting_output_dir"] / "si_sorting.pkl"
                 si_sorting.dump_to_pickle(sorting_save_path, relative_to=output_dir)
                 return si_sorting
 
@@ -249,15 +264,21 @@ class SIClustering(dj.Imported):
             import spikeinterface.comparison as sc
             from spikeinterface.curation import remove_duplicated_spikes
 
-            min_agreement = params["SI_CONSENSUS_PARAMS"].get('min_agree', len(sorter_objects))
-            print(f'Running SI consensus requiring agreement from {min_agreement}/{len(sorter_objects)} sorters')
+            min_agreement = params["SI_CONSENSUS_PARAMS"].get(
+                "min_agree", len(sorter_objects)
+            )
+            print(
+                f"Running SI consensus requiring agreement from {min_agreement}/{len(sorter_objects)} sorters"
+            )
 
-            consensus = sc.compare_multiple_sorters(sorting_list=sorter_objects,
-                                                    name_list=sorter_names,
-                                                    verbose=False,
-                                                    delta_time=.2,
-                                                    match_score=.3,
-                                                    spiketrain_mode='union')
+            consensus = sc.compare_multiple_sorters(
+                sorting_list=sorter_objects,
+                name_list=sorter_names,
+                verbose=False,
+                delta_time=0.2,
+                match_score=0.3,
+                spiketrain_mode="union",
+            )
             agreement = consensus.get_agreement_sorting(minimum_agreement_count=2)
             agreement = remove_duplicated_spikes(agreement)
             unit_labels = []
@@ -268,9 +289,10 @@ class SIClustering(dj.Imported):
                 unit_labels.append(label)
             agreement.set_property("KSLabel", unit_labels)
 
-            consensus_folder = output_dir / clustering_method / 'spike_sorting' / "si_sorting.pkl"
+            consensus_folder = (
+                output_dir / clustering_method / "spike_sorting" / "si_sorting.pkl"
+            )
             agreement.dump_to_pickle(consensus_folder, relative_to=output_dir)
-
 
         self.insert1(
             {
@@ -295,6 +317,14 @@ class PostProcessing(dj.Imported):
     execution_duration: float  # execution duration in hours
     do_si_export=0: bool       # whether to export to phy
     """
+
+    class File(dj.Part):
+        definition = """
+        -> master
+        file_name: varchar(255)
+        ---
+        file: filepath@ephys-processed
+        """
 
     def make(self, key):
         execution_time = datetime.utcnow()
@@ -365,6 +395,15 @@ class PostProcessing(dj.Imported):
             }
         )
 
+        # Insert result files
+        self.File.insert(
+            [
+                {**key, "file_name": f.relative_to(analyzer_output_dir).as_posix(), "file": f}
+                for f in analyzer_output_dir.rglob("*")
+                if f.is_file()
+            ]
+        )
+
         # Once finished, insert this `key` into ephys.Clustering
         ephys.Clustering.insert1(
             {**key, "clustering_time": datetime.utcnow()}, allow_direct_insert=True
@@ -381,6 +420,14 @@ class SIExport(dj.Computed):
     execution_time: datetime
     execution_duration: float
     """
+
+    class File(dj.Part):
+        definition = """
+        -> master
+        file_name: varchar(255)
+        ---
+        file: filepath@ephys-processed
+        """
 
     @property
     def key_source(self):
@@ -444,3 +491,13 @@ class SIExport(dj.Computed):
                 / 3600,
             }
         )
+
+        # Insert result files
+        for report_dirname in ("spikeinterface_report", "phy"):
+            self.File.insert(
+                [
+                    {**key, "file_name": f.relative_to(analyzer_output_dir).as_posix(), "file": f}
+                    for f in (analyzer_output_dir / report_dirname).rglob("*")
+                    if f.is_file()
+                ]
+            )
