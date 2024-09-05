@@ -281,13 +281,14 @@ class SIClustering(dj.Imported):
             )
             agreement = consensus.get_agreement_sorting(minimum_agreement_count=2)
             agreement = remove_duplicated_spikes(agreement)
-            unit_labels = []
-            for si_id, sorter_ids in zip(agreement.unit_ids, agreement.get_property('unit_ids')):
-                sorter_labels = [sorter_objects[i].get_unit_property(sorter_ids[sorter_name], "KSLabel")
-                                    for i, sorter_name in enumerate(sorter_names)]
-                label = 'mua' if 'mua' in sorter_labels else 'good'
-                unit_labels.append(label)
-            agreement.set_property("KSLabel", unit_labels)
+            if len(agreement.unit_ids):
+                unit_labels = []
+                for si_id, sorter_ids in zip(agreement.unit_ids, agreement.get_property('unit_ids')):
+                    sorter_labels = [sorter_objects[i].get_unit_property(sorter_ids[sorter_name], "KSLabel")
+                                        for i, sorter_name in enumerate(sorter_names)]
+                    label = 'mua' if 'mua' in sorter_labels else 'good'
+                    unit_labels.append(label)
+                agreement.set_property("KSLabel", unit_labels)
 
             consensus_folder = (
                 output_dir / clustering_method / "spike_sorting" / "si_sorting.pkl"
