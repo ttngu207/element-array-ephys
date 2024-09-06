@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import json
 import shutil
-
+import numpy as np
+import pandas as pd
 from element_interface.utils import dict_to_uuid, find_full_path
 
 logger = dj.logger
@@ -42,6 +43,7 @@ def activate(
         create_tables=create_tables,
         add_objects={**ephys.__dict__, **ephys_sorter.__dict__},
     )
+    ephys.ClusterQualityLabel.insert1(("unsorted", "unsorted spikes (Phy default)"))
 
 
 @schema
@@ -215,7 +217,9 @@ class ManualCuration(dj.Manual):
         # Light logic to safeguard against re-inserting the same curation
         if (curation_output_dir / ".manual_curation_entry.json").exists():
             if key is not None:
-                logger.warning(".manual_curation_entry.json already exists. Ignoring inputs.")
+                logger.warning(
+                    ".manual_curation_entry.json already exists. Ignoring inputs."
+                )
 
             with open(curation_output_dir / ".manual_curation_entry.json", "r") as f:
                 key = json.load(f)
@@ -233,7 +237,9 @@ class ManualCuration(dj.Manual):
                     return
         else:
             if parent_curation_id is None or key is None:
-                raise ValueError(".manual_curation_entry.json not found. `key` AND `parent_curation_id` must be specified")
+                raise ValueError(
+                    ".manual_curation_entry.json not found. `key` AND `parent_curation_id` must be specified"
+                )
 
         if curation_method != "Phy":
             raise ValueError(f"Unsupported curation method: {curation_method}")
@@ -288,7 +294,8 @@ class ManualCuration(dj.Manual):
                         "file": f,
                     }
                     for f in new_curation_output_dir.rglob("*")
-                    if f.is_file() and f.name not in ("recording.dat", ".manual_curation_entry.json")
+                    if f.is_file()
+                    and f.name not in ("recording.dat", ".manual_curation_entry.json")
                 ]
             )
 
@@ -302,15 +309,170 @@ class ManualCuration(dj.Manual):
         try:
             shutil.rmtree(curation_output_dir)
         except Exception as e:
-            logger.error(f"Failed to fully delete the old curation directory (please try to delete manually):\n\t{curation_output_dir}\n{e}")
+            logger.error(
+                f"Failed to fully delete the old curation directory (please try to delete manually):\n\t{curation_output_dir}\n{e}"
+            )
 
         if delete_local_dir:
             try:
                 shutil.rmtree(new_curation_output_dir)
             except Exception as e:
-                logger.error(f"Failed to fully delete the new curation directory (please try to delete manually):\n\t{new_curation_output_dir}\n{e}")
+                logger.error(
+                    f"Failed to fully delete the new curation directory (please try to delete manually):\n\t{new_curation_output_dir}\n{e}"
+                )
 
         return key
+
+
+@schema
+class OfficialCuration(dj.Manual):
+    definition = """
+    -> ephys.Clustering
+    ---
+    -> ManualCuration
+    """
+
+
+@schema
+class MakeOfficialCuration(dj.Imported):
+    definition = """
+    -> OfficialCuration
+    ---
+    execution_time: datetime        # datetime of the start of this step
+    new_unit_count: int             # number of new units added
+    removed_unit_count: int         # number of units removed
+    """
+
+    @property
+    def key_source(self):
+        return OfficialCuration & ephys.CuratedClustering
+
+    def make(self, key):
+        """
+        High level logic
+        Step 1: delete units from ephys.CuratedClustering.Unit that are not in the new curation (merged or split)
+        Step 2: add new entries for new units (newly merged or split)
+        TODO
+            Step 3: compute waveform for new units
+            Step 4: add NaNs for all QC metrics for new units
+
+        Note: when replacing an OfficialCuration, manual steps must be taken
+        for a reset ingestion of ephys.CuratedClustering and below
+          - delete: (ephys.CuratedClustering & key).delete()
+          - repopulate: calls populate for `CuratedClustering`, `WaveformSet`, `QualityMetrics`
+        """
+        from element_array_ephys.readers import kilosort
+
+        curated_files = (ManualCuration.File & key).fetch("file")
+        curation_output_dir = (
+            next(Path(f) for f in curated_files if Path(f).name == "params.py")
+        ).parent
+
+        curation_method = (MakeOfficialCuration * ManualCuration & key).fetch1(
+            "curation_method"
+        )
+
+        if curation_method != "Phy":
+            raise ValueError(f"Unsupported curation method: {curation_method}")
+
+        clus_key = (ephys.Clustering & key).fetch1("KEY")
+
+        kilosort_dataset = kilosort.Kilosort(curation_output_dir)
+
+        orig_si_unit_map = {
+            u: i
+            for i, u in enumerate(
+                (ephys.CuratedClustering.Unit & clus_key).fetch("unit", order_by="unit")
+            )
+        }
+
+        new_si_unit_map = pd.read_csv(
+            curation_output_dir / "cluster_si_unit_id.tsv", sep="\t", index_col=1
+        ).to_dict()["cluster_id"]
+
+        # find set of units that are in the original curation but not in the new
+        removed_units = set(orig_si_unit_map) - set(new_si_unit_map)
+        # find set of units that are in the new curation but not in the original
+        new_units = set(kilosort_dataset.data["cluster_ids"]) - set(
+            orig_si_unit_map.values()
+        )
+        new_si_unit_map.update(
+            {i + max(orig_si_unit_map) + 1: u for i, u in enumerate(new_units)}
+        )
+        new_si_unit_reverse_map = {v: k for k, v in new_si_unit_map.items()}
+
+        # Get channel and electrode-site mapping
+        electrode_query = (ephys.EphysRecording.Channel & clus_key).proj(
+            ..., "-channel_name"
+        )
+        channel2electrode_map: dict[int, dict] = {
+            chn.pop("channel_idx"): chn for chn in electrode_query.fetch(as_dict=True)
+        }
+
+        sample_rate = kilosort_dataset.data["params"]["sample_rate"]
+        spike_times = kilosort_dataset.data["spike_times"]
+        kilosort_dataset.extract_spike_depths()
+        # -- Spike-sites and Spike-depths --
+        spike_sites = np.array(
+            [
+                channel2electrode_map[s]["electrode"]
+                for s in kilosort_dataset.data["spike_sites"]
+            ]
+        )
+        spike_depths = kilosort_dataset.data["spike_depths"]
+
+        # -- Remove units
+        with dj.config(safemode=False):
+            (
+                ephys.CuratedClustering.Unit
+                & clus_key
+                & [{"unit": u} for u in removed_units]
+            ).delete(force=True)
+
+        # -- Insert unit, label, peak-chn
+        for cluster_id, cluster_group in zip(
+            kilosort_dataset.data["cluster_ids"],
+            kilosort_dataset.data["cluster_groups"],
+        ):
+            unit_key = {**clus_key, "unit": new_si_unit_reverse_map[cluster_id]}
+            if cluster_id in new_units:
+                # add new unit entry
+                unit_channel, _ = kilosort_dataset.get_best_channel(cluster_id)
+                unit_spike_times = (
+                    spike_times[kilosort_dataset.data["spike_clusters"] == cluster_id]
+                    / sample_rate
+                )
+                spike_count = len(unit_spike_times)
+
+                ephys.CuratedClustering.Unit.insert1(
+                    {
+                        **unit_key,
+                        "cluster_quality_label": cluster_group,
+                        **channel2electrode_map[unit_channel],
+                        "spike_times": unit_spike_times,
+                        "spike_count": spike_count,
+                        "spike_sites": spike_sites[
+                            kilosort_dataset.data["spike_clusters"] == cluster_id
+                        ],
+                        "spike_depths": spike_depths[
+                            kilosort_dataset.data["spike_clusters"] == cluster_id
+                        ],
+                    },
+                    allow_direct_insert=True,
+                )
+            else:
+                # just update the label
+                unit_entry = {**unit_key, "cluster_quality_label": cluster_group}
+                ephys.CuratedClustering.Unit.update1(unit_entry)
+
+        self.insert1(
+            {
+                **key,
+                "execution_time": datetime.now(timezone.utc),
+                "new_unit_count": len(new_units),
+                "removed_unit_count": len(removed_units),
+            }
+        )
 
 
 def launch_phy(key, parent_curation_id=-1, download_binary=False):
