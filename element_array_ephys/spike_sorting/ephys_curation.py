@@ -343,6 +343,10 @@ class MakeOfficialCuration(dj.Imported):
     removed_unit_count: int         # number of units removed
     """
 
+    @property
+    def key_source(self):
+        return OfficialCuration & ephys.CuratedClustering
+
     def make(self, key):
         """
         High level logic
