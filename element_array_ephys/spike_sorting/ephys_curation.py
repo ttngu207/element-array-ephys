@@ -348,7 +348,7 @@ class ApplyOfficialCuration(dj.Imported):
 
     @property
     def key_source(self):
-        return ApplyOfficialCuration & ephys.CuratedClustering
+        return OfficialCuration & ephys.CuratedClustering
 
     def make(self, key):
         """
