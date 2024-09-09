@@ -348,7 +348,7 @@ class ApplyOfficialCuration(dj.Imported):
 
     @property
     def key_source(self):
-        return OfficialCuration & ephys.CuratedClustering
+        return ApplyOfficialCuration & ephys.CuratedClustering
 
     def make(self, key):
         """
@@ -371,7 +371,7 @@ class ApplyOfficialCuration(dj.Imported):
             next(Path(f) for f in curated_files if Path(f).name == "params.py")
         ).parent
 
-        curation_method = (MakeOfficialCuration * ManualCuration & key).fetch1(
+        curation_method = (ApplyOfficialCuration * ManualCuration & key).fetch1(
             "curation_method"
         )
 
