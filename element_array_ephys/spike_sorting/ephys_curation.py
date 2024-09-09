@@ -371,7 +371,7 @@ class ApplyOfficialCuration(dj.Imported):
             next(Path(f) for f in curated_files if Path(f).name == "params.py")
         ).parent
 
-        curation_method = (ApplyOfficialCuration * ManualCuration & key).fetch1(
+        curation_method = (OfficialCuration * ManualCuration & key).fetch1(
             "curation_method"
         )
 
