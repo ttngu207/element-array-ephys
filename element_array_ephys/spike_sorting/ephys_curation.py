@@ -43,7 +43,10 @@ def activate(
         create_tables=create_tables,
         add_objects={**ephys.__dict__, **ephys_sorter.__dict__},
     )
-    ephys.ClusterQualityLabel.insert1(("unsorted", "unsorted spikes (Phy default)"))
+    try:
+        ephys.ClusterQualityLabel.insert1(("unsorted", "unsorted spikes (Phy default)"), skip_duplicates=True)
+    except Exception as e:
+        logger.warning(f"Failed to insert default ClusterQualityLabel: {e}")
 
 
 @schema
@@ -334,7 +337,7 @@ class OfficialCuration(dj.Manual):
 
 
 @schema
-class MakeOfficialCuration(dj.Imported):
+class ApplyOfficialCuration(dj.Imported):
     definition = """
     -> OfficialCuration
     ---
@@ -368,7 +371,7 @@ class MakeOfficialCuration(dj.Imported):
             next(Path(f) for f in curated_files if Path(f).name == "params.py")
         ).parent
 
-        curation_method = (MakeOfficialCuration * ManualCuration & key).fetch1(
+        curation_method = (OfficialCuration * ManualCuration & key).fetch1(
             "curation_method"
         )
 
