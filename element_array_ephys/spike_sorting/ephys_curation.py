@@ -452,7 +452,7 @@ class ApplyOfficialCuration(dj.Imported):
                 ephys.CuratedClustering.Unit.insert1(
                     {
                         **unit_key,
-                        "cluster_quality_label": "unsorted",  # new units will have "unsorted" label
+                        "cluster_quality_label": "no kilosort label",  # new units will have "no kilosort label" label
                         **channel2electrode_map[unit_channel],
                         "spike_times": unit_spike_times,
                         "spike_count": spike_count,
