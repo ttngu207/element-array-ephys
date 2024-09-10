@@ -44,7 +44,9 @@ def activate(
         add_objects={**ephys.__dict__, **ephys_sorter.__dict__},
     )
     try:
-        ephys.ClusterQualityLabel.insert1(("unsorted", "unsorted spikes (Phy default)"), skip_duplicates=True)
+        ephys.ClusterQualityLabel.insert1(
+            ("no kilosort label", "unsorted spikes (Phy default)"), skip_duplicates=True
+        )
     except Exception as e:
         logger.warning(f"Failed to insert default ClusterQualityLabel: {e}")
 
@@ -450,7 +452,7 @@ class ApplyOfficialCuration(dj.Imported):
                 ephys.CuratedClustering.Unit.insert1(
                     {
                         **unit_key,
-                        "cluster_quality_label": cluster_group,
+                        "cluster_quality_label": "no kilosort label",  # new units will have "no kilosort label" label
                         **channel2electrode_map[unit_channel],
                         "spike_times": unit_spike_times,
                         "spike_count": spike_count,
@@ -463,10 +465,11 @@ class ApplyOfficialCuration(dj.Imported):
                     },
                     allow_direct_insert=True,
                 )
-            else:
-                # just update the label
-                unit_entry = {**unit_key, "cluster_quality_label": cluster_group}
-                ephys.CuratedClustering.Unit.update1(unit_entry)
+
+            # insert the new unit label
+            ephys.CuratedClustering.ManualLabel.insert1(
+                {**unit_key, "manual_label": cluster_group}, allow_direct_insert=True
+            )
 
         self.insert1(
             {
