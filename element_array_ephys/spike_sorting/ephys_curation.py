@@ -45,7 +45,7 @@ def activate(
     )
     try:
         ephys.ClusterQualityLabel.insert1(
-            ("unsorted", "unsorted spikes (Phy default)"), skip_duplicates=True
+            ("no kilosort label", "unsorted spikes (Phy default)"), skip_duplicates=True
         )
     except Exception as e:
         logger.warning(f"Failed to insert default ClusterQualityLabel: {e}")
