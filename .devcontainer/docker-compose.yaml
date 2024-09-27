@@ -3,8 +3,8 @@ services:
     cpus: 4
     mem_limit: 8g
     build:
-      context: ..
-      dockerfile: ./.devcontainer/Dockerfile
+      context: .
+      dockerfile: .devcontainer/Dockerfile
       args:
         - PY_VER=${PY_VER:-3.11}
         - DISTRO=${DISTRO:-buster}
