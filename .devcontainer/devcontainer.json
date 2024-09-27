@@ -1,6 +1,7 @@
 {
 	"name": "Environment + Data",
 	"dockerComposeFile": [
+		"../docker-compose.yml",
 		"docker-compose.yaml"
 	],
 	"service": "app",
