@@ -1,4 +1,3 @@
-version: "3"
 services:
   app:
     cpus: 4
@@ -6,9 +5,10 @@ services:
     build:
       context: ..
       dockerfile: ./.devcontainer/Dockerfile
-    # image: datajoint/element_array_ephys:latest
-    extra_hosts:
-      - fakeservices.datajoint.io:127.0.0.1
+      args:
+        - PY_VER=${PY_VER:-3.11}
+        - DISTRO=${DISTRO:-buster}
+    image: datajoint/element_array_ephys:latest
     environment:
       - DJ_PUBLIC_S3_LOCATION=djhub.vathes.datapub.elements:/workflow-array-ephys-benchmark/v2
     devices:
@@ -18,8 +18,10 @@ services:
     security_opt:
       - apparmor:unconfined
     volumes:
-      - ..:/workspaces/element-array-ephys:cached
+      - ..:/workspaces:cached
       - docker_data:/var/lib/docker # persist docker images
-    privileged: true # only because of dind
+    user: root
+    # Overrides default command so things don't shut down after the process ends.
+    command: /bin/sh -c "while sleep 1000; do :; done"
 volumes:
   docker_data:
