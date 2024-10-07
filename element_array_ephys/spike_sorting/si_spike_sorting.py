@@ -61,6 +61,14 @@ class PreProcessing(dj.Imported):
     execution_duration: float  # execution duration in hours
     """
 
+    class File(dj.Part):
+        definition = """
+        -> master
+        file_name: varchar(255)
+        ---
+        file: filepath@ephys-processed
+        """
+
     @property
     def key_source(self):
         return (
@@ -176,6 +184,14 @@ class PreProcessing(dj.Imported):
                 / 3600,
             }
         )
+        # Insert result files
+        self.File.insert(
+            [
+                {**key, "file_name": f.relative_to(recording_dir).as_posix(), "file": f}
+                for f in recording_dir.rglob("*")
+                if f.is_file()
+            ]
+        )
 
 
 @schema
@@ -188,6 +204,14 @@ class SIClustering(dj.Imported):
     execution_time: datetime        # datetime of the start of this step
     execution_duration: float       # execution duration in hours
     """
+
+    class File(dj.Part):
+        definition = """
+        -> master
+        file_name: varchar(255)
+        ---
+        file: filepath@ephys-processed
+        """
 
     def make(self, key):
         execution_time = datetime.utcnow()
@@ -209,14 +233,20 @@ class SIClustering(dj.Imported):
         sorters_to_run = []
 
         if clustering_method == "consensus":
-            assert isinstance(sorting_params, list), "Consensus method requires a list of each sorter's parameters"
+            assert isinstance(
+                sorting_params, list
+            ), "Consensus method requires a list of each sorter's parameters"
             for i, param_set in enumerate(sorting_params):
-                sorters_to_run.append({
-                    'sorter_name': param_set['sorter_name'].replace(".", "_"),
-                    'sorting_output_dir': output_dir / clustering_method /
-                                          f'{param_set["sorter_name"].replace(".", "_")}_params{i}' / "spike_sorting",
-                    'sorter_params': param_set['sorter_params'],
-                })
+                sorters_to_run.append(
+                    {
+                        "sorter_name": param_set["sorter_name"].replace(".", "_"),
+                        "sorting_output_dir": output_dir
+                        / clustering_method
+                        / f'{param_set["sorter_name"].replace(".", "_")}_params{i}'
+                        / "spike_sorting",
+                        "sorter_params": param_set["sorter_params"],
+                    }
+                )
         else:
             assert isinstance(
                 sorting_params, dict
@@ -233,6 +263,7 @@ class SIClustering(dj.Imported):
 
         sorter_objects = []
         sorter_names = []
+        result_files = []
         for i, sorter in enumerate(sorters_to_run):
             # Run sorting
             @memoized_result(
@@ -259,6 +290,19 @@ class SIClustering(dj.Imported):
 
             sorter_objects.append(_run_sorter())
             sorter_names.append(f"{sorter['sorter_name']}_params{i}")
+            result_files.extend(
+                [
+                    {
+                        **key,
+                        "file_name": f.relative_to(
+                            sorter["sorting_output_dir"]
+                        ).as_posix(),
+                        "file": f,
+                    }
+                    for f in sorter["sorting_output_dir"].rglob("*")
+                    if f.is_file()
+                ]
+            )
 
         if clustering_method == "consensus":
             import spikeinterface.comparison as sc
@@ -267,7 +311,7 @@ class SIClustering(dj.Imported):
             min_agreement = params["SI_CONSENSUS_PARAMS"].get(
                 "min_agree", len(sorter_objects)
             )
-            print(
+            log.info(
                 f"Running SI consensus requiring agreement from {min_agreement}/{len(sorter_objects)} sorters"
             )
 
@@ -294,6 +338,17 @@ class SIClustering(dj.Imported):
                 output_dir / clustering_method / "spike_sorting" / "si_sorting.pkl"
             )
             agreement.dump_to_pickle(consensus_folder, relative_to=output_dir)
+            result_files.extend(
+                [
+                    {
+                        **key,
+                        "file_name": f.relative_to(consensus_folder).as_posix(),
+                        "file": f,
+                    }
+                    for f in consensus_folder.rglob("*")
+                    if f.is_file()
+                ]
+            )
 
         self.insert1(
             {
@@ -305,6 +360,8 @@ class SIClustering(dj.Imported):
                 / 3600,
             }
         )
+        # Insert result files
+        self.File.insert(result_files)
 
 
 @schema
@@ -399,7 +456,11 @@ class PostProcessing(dj.Imported):
         # Insert result files
         self.File.insert(
             [
-                {**key, "file_name": f.relative_to(analyzer_output_dir).as_posix(), "file": f}
+                {
+                    **key,
+                    "file_name": f.relative_to(analyzer_output_dir).as_posix(),
+                    "file": f,
+                }
                 for f in analyzer_output_dir.rglob("*")
                 if f.is_file()
             ]
@@ -498,7 +559,11 @@ class SIExport(dj.Computed):
         for report_dirname in ("spikeinterface_report", "phy"):
             self.File.insert(
                 [
-                    {**key, "file_name": f.relative_to(analyzer_output_dir).as_posix(), "file": f}
+                    {
+                        **key,
+                        "file_name": f.relative_to(analyzer_output_dir).as_posix(),
+                        "file": f,
+                    }
                     for f in (analyzer_output_dir / report_dirname).rglob("*")
                     if f.is_file()
                 ]
