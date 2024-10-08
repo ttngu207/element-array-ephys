@@ -118,7 +118,9 @@ class ManualCuration(dj.Manual):
         init_datetime = datetime.now(timezone.utc)
 
         # Download the spike sorting results
-        assert ephys.Clustering & key, f"Invalid ephys.Clustering key: {key}"
+        assert ephys.CuratedClustering & key, f"Invalid ephys.Clustering key: {key}"
+        if len(ephys.CuratedClustering.Unit & key) == 0:
+            logger.warning("This clustering has no units!!!")
 
         if parent_curation_id == -1:
             assert (
