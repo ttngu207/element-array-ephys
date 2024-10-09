@@ -294,9 +294,7 @@ class SIClustering(dj.Imported):
                 [
                     {
                         **key,
-                        "file_name": f.relative_to(
-                            output_dir
-                        ).as_posix(),
+                        "file_name": f.relative_to(output_dir).as_posix(),
                         "file": f,
                     }
                     for f in sorter["sorting_output_dir"].rglob("*")
@@ -327,10 +325,16 @@ class SIClustering(dj.Imported):
             agreement = remove_duplicated_spikes(agreement)
             if len(agreement.unit_ids):
                 unit_labels = []
-                for si_id, sorter_ids in zip(agreement.unit_ids, agreement.get_property('unit_ids')):
-                    sorter_labels = [sorter_objects[i].get_unit_property(sorter_ids[sorter_name], "KSLabel")
-                                        for i, sorter_name in enumerate(sorter_names)]
-                    label = 'mua' if 'mua' in sorter_labels else 'good'
+                for si_id, sorter_ids in zip(
+                    agreement.unit_ids, agreement.get_property("unit_ids")
+                ):
+                    sorter_labels = [
+                        sorter_objects[i].get_unit_property(
+                            sorter_ids[sorter_name], "KSLabel"
+                        )
+                        for i, sorter_name in enumerate(sorter_names)
+                    ]
+                    label = "mua" if "mua" in sorter_labels else "good"
                     unit_labels.append(label)
                 agreement.set_property("KSLabel", unit_labels)
 
@@ -421,7 +425,9 @@ class PostProcessing(dj.Imported):
         def _sorting_analyzer_compute():
             if not has_units:
                 log.info("No units found in sorting object. Skipping sorting analyzer.")
-                analyzer_output_dir.mkdir(parents=True, exist_ok=True)  # create empty directory anyway, for consistency
+                analyzer_output_dir.mkdir(
+                    parents=True, exist_ok=True
+                )  # create empty directory anyway, for consistency
                 return
 
             # Sorting Analyzer
@@ -447,7 +453,9 @@ class PostProcessing(dj.Imported):
 
         _sorting_analyzer_compute()
 
-        do_si_export = postprocessing_params.get("export_to_phy", False) or postprocessing_params.get("export_report", False)
+        do_si_export = postprocessing_params.get(
+            "export_to_phy", False
+        ) or postprocessing_params.get("export_report", False)
 
         self.insert1(
             {
