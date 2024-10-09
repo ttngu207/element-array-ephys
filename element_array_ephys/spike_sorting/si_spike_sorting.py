@@ -295,7 +295,7 @@ class SIClustering(dj.Imported):
                     {
                         **key,
                         "file_name": f.relative_to(
-                            sorter["sorting_output_dir"]
+                            output_dir
                         ).as_posix(),
                         "file": f,
                     }
@@ -342,7 +342,7 @@ class SIClustering(dj.Imported):
                 [
                     {
                         **key,
-                        "file_name": f.relative_to(consensus_folder).as_posix(),
+                        "file_name": f.relative_to(output_dir).as_posix(),
                         "file": f,
                     }
                     for f in consensus_folder.rglob("*")
