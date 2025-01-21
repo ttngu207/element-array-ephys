@@ -162,12 +162,14 @@ class PreProcessing(dj.Imported):
             si_recs = []
             for f in nsx5_fullpaths:
                 si_rec = si_extractor(file_path=f, stream_name="nsx5")
-                # find & remove non-ephys channels
-                non_ephys_chns = set(si_rec.channel_ids) - set(
-                    (electrodes_df.channel_idx.values + 1).astype(str)
-                )
-                si_recs.append(si_rec.remove_channels(list(non_ephys_chns)))
+                si_recs.append(si_rec)
             si_recording = si.concatenate_recordings(si_recs)
+            # find & remove extra channels
+            in_use_chn_ids = si_recording.channel_ids[electrodes_df.channel_idx.values]
+            chn2remove = set(si_recording.channel_ids) - set(in_use_chn_ids)
+            si_recording = si_recording.remove_channels(list(chn2remove))
+            in_use_chn_ind = [si_recording.channel_ids.tolist().index(chn_id) for chn_id in in_use_chn_ids]
+            electrodes_df.channel_idx = in_use_chn_ind
         else:
             raise NotImplementedError(
                 f"SpikeInterface processing for {acq_software} not yet implemented."
