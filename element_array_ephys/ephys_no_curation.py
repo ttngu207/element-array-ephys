@@ -1049,7 +1049,6 @@ class CuratedClustering(dj.Imported):
         channel2electrode_map: dict[int, dict] = {
             chn.pop("channel_idx"): chn for chn in electrode_query.fetch(as_dict=True)
         }
-
         # Get sorter method and create output directory.
         sorter_name = clustering_method.replace(".", "_")
         si_sorting_analyzer_dir = output_dir / sorter_name / "sorting_analyzer"
@@ -1084,10 +1083,14 @@ class CuratedClustering(dj.Imported):
             spike_count_dict: dict[int, int] = si_sorting.count_num_spikes_per_unit()
             # {unit: spike_count}
 
-            # update channel2electrode_map to match with probe's channel index
+            # create channel2electrode_map
+            electrode_map: dict[int, dict] = {
+                elec["electrode"]: elec for elec in electrode_query.fetch(as_dict=True)
+            }
             channel2electrode_map = {
-                idx: channel2electrode_map[int(chn_idx)]
-                for idx, chn_idx in enumerate(sorting_analyzer.get_probe().contact_ids)
+                chn_idx: electrode_map[int(elec_id)]
+                for chn_idx, elec_id in zip(sorting_analyzer.get_probe().device_channel_indices,
+                                            sorting_analyzer.get_probe().contact_ids)
             }
 
             # Get unit id to quality label mapping
