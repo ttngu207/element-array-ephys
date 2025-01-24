@@ -1300,10 +1300,14 @@ class WaveformSet(dj.Imported):
             )  # {unit: peak_channel_index}
             unit_peak_channel = {u: chn[0] for u, chn in unit_peak_channel.items()}
 
-            # update channel2electrode_map to match with probe's channel index
+            # create channel2electrode_map
+            electrode_map: dict[int, dict] = {
+                elec["electrode"]: elec for elec in electrode_query.fetch(as_dict=True)
+            }
             channel2electrode_map = {
-                idx: channel2electrode_map[int(chn_idx)]
-                for idx, chn_idx in enumerate(sorting_analyzer.get_probe().contact_ids)
+                chn_idx: electrode_map[int(elec_id)]
+                for chn_idx, elec_id in zip(sorting_analyzer.get_probe().device_channel_indices,
+                                            sorting_analyzer.get_probe().contact_ids)
             }
 
             templates = sorting_analyzer.get_extension("templates")
