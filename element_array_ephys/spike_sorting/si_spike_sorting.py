@@ -410,7 +410,7 @@ class PostProcessing(dj.Imported):
 
         postprocessing_params = params["SI_POSTPROCESSING_PARAMS"]
 
-        job_kwargs = postprocessing_params.get(
+        job_kwargs = postprocessing_params.pop(
             "job_kwargs", {"n_jobs": -1, "chunk_duration": "1s"}
         )
 
@@ -522,7 +522,7 @@ class SIExport(dj.Computed):
 
         postprocessing_params = params["SI_POSTPROCESSING_PARAMS"]
 
-        job_kwargs = postprocessing_params.get(
+        job_kwargs = postprocessing_params.pop(
             "job_kwargs", {"n_jobs": -1, "chunk_duration": "1s"}
         )
 
